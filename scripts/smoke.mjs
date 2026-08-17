@@ -26,6 +26,16 @@ const calls = [
   ["search_student_orgs", { query: "robotics", limit: 3 }],
   ["search_club_events", { limit: 3 }],
   ["campus_weather", { periods: 2 }],
+  ["recwell_occupancy", { sort: "busiest" }],
+  ["library_hours", {}],
+  ["athletics_sports", {}],
+  ["athletics_schedule", { sport: "Football", upcoming_only: true }],
+  ["athletics_upcoming", { days: 60, limit: 3 }],
+  ["purdue_news", { limit: 2 }],
+  ["academic_calendar", {}],
+  ["bus_routes", {}],
+  ["bus_stops", { query: "Purdue Memorial Union" }],
+  ["bus_next_departures", { stop: "Purdue Memorial Union (PMU) on MD Blvd", limit: 5 }],
 ];
 
 let failures = 0;

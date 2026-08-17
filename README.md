@@ -1,6 +1,8 @@
 # purdue-mcp
 
-One MCP server for **all public, real-time Purdue University data** — dining menus, the course catalog, campus events, student orgs, buildings, and weather. Point any MCP client (Claude Code, Claude Desktop, Cursor, …) at it and ask "what's for dinner at Wiley" or "who teaches CS 18000 this fall".
+One MCP server for **all public, real-time Purdue University data** — dining menus, live gym occupancy, the course catalog, bus times, campus events, student orgs, library hours, athletics, news, and weather. Point any MCP client (Claude Code, Claude Desktop, Cursor, …) at it and ask "what's for dinner at Wiley", "how busy is the CoRec", or "when's the next bus from the PMU".
+
+**24 tools across 10 public sources.**
 
 Everything it reads is public and unauthenticated. It never touches a student account, grades, schedules, bursar records, or anything behind a Purdue login.
 
@@ -70,6 +72,36 @@ claude mcp add purdue -- npx -y purdue-mcp
 | `search_student_orgs` | ~1,200 registered student organizations on BoilerLink |
 | `search_club_events` | Upcoming club events: callouts, socials, meetings |
 
+### Facilities
+
+| Tool | What it answers |
+| --- | --- |
+| `recwell_occupancy` | Live headcount and % capacity for all 37 counted RecWell spaces — "how busy is the CoRec right now" |
+| `library_hours` | Today's hours and open/closed status for every library, or the full week |
+
+### Athletics
+
+| Tool | What it answers |
+| --- | --- |
+| `athletics_sports` | Every varsity team and its current season schedule |
+| `athletics_schedule` | Full season for one team — opponents, rankings, home/away, venue, results |
+| `athletics_upcoming` | Next Boilermaker games across all sports, soonest first |
+
+### Getting around
+
+| Tool | What it answers |
+| --- | --- |
+| `bus_routes` | Every CityBus route serving campus and Greater Lafayette |
+| `bus_stops` | Find stops by name, or the stops nearest a lat/lon |
+| `bus_next_departures` | Next scheduled departures from a stop, with minutes-until |
+
+### News and deadlines
+
+| Tool | What it answers |
+| --- | --- |
+| `purdue_news` | Official newsroom articles, searchable |
+| `academic_calendar` | First day of classes, breaks, finals week, add/drop deadlines, exam scheduling |
+
 ### Environment
 
 | Tool | What it answers |
@@ -86,18 +118,21 @@ Dates default to **today in the campus timezone** (`America/Indiana/Indianapolis
 | Purdue.io | `api.purdue.io/odata` | Community-run open-source catalog mirror ([Purdue-io/PurdueApi](https://github.com/Purdue-io/PurdueApi)) |
 | Purdue Events | `events.purdue.edu/api/2` | Localist public API |
 | BoilerLink | `purdue.campuslabs.com/engage/api/discovery` | Anthology Engage public discovery API |
+| Purdue RecWell | `goboardapi.azurewebsites.net` (Connect2) | Live occupancy counters; account key is the one Purdue's own public widget ships |
+| Purdue Libraries | `calendar.lib.purdue.edu` | Springshare LibCal public hours endpoints |
+| Purdue Athletics | `purduesports.com/website-api` | Official athletics site's public JSON API |
+| Purdue Newsroom / Registrar | `purdue.edu/{newsroom,registrar}/wp-json` | WordPress REST API |
+| CityBus | `bus.gocitybus.com` GTFS | Static schedule feed; **no public real-time feed exists** |
 | NOAA / NWS | `api.weather.gov` | Public federal API |
 
 Responses are cached in-process with short TTLs (30s–24h depending on how fast the data moves) to stay a polite client. Nothing is persisted to disk.
 
-## Not yet covered
+## Ruled out (investigated, no public source)
 
-These are real student needs where a public, stable endpoint has not been confirmed. PRs very welcome:
-
-- **CoRec / RecWell live occupancy** — the facility-usage widget is rendered client-side; the underlying feed has not been pinned down.
-- **Laundry machine availability** — LaundryView's API is open, but Purdue's room keys are unknown.
-- **CityBus real-time vehicle positions** — no public GTFS-realtime or JSON feed located; only the MyRide app.
-- **Parking garage availability**, **library hours and study-room availability**, **athletics schedules**.
+- **Laundry machine availability** — Purdue moved residence-hall laundry to CSCPay Mobile, which has no public web status page. The old `washalertweb` host the community app scraped no longer resolves.
+- **Real-time bus positions** — CityBus publishes GTFS static only. No GTFS-Realtime feed is listed on Transitland or the Mobility Database, and MyRide's backend is not public. `bus_next_departures` returns timetable times.
+- **Parking garage availability** — Purdue Parking publishes no live space counts.
+- **Seat availability / waitlists** — lives behind the myPurdue login. Out of scope by design.
 
 ## Adding a source
 
