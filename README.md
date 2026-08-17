@@ -10,36 +10,54 @@ Everything it reads is public and unauthenticated. It never touches a student ac
 
 ## Install
 
-```bash
-npm install -g purdue-mcp
-```
-
-Or run straight from the repo:
-
-```bash
-git clone https://github.com/sharziki/purdue-mcp && cd purdue-mcp
-npm install && npm run build
-```
-
-## Connect it
-
 **Claude Code**
 
 ```bash
-claude mcp add purdue -- npx -y purdue-mcp
+claude mcp add purdue -s user -- npx -y purdue-mcp@latest
 ```
 
-**Claude Desktop / Cursor** — add to your MCP config:
+**Codex CLI**
+
+```bash
+codex mcp add purdue -- npx -y purdue-mcp@latest
+```
+
+**Cursor / Claude Desktop / Windsurf** — merge into the client's MCP config:
 
 ```json
 {
   "mcpServers": {
     "purdue": {
       "command": "npx",
-      "args": ["-y", "purdue-mcp"]
+      "args": ["-y", "purdue-mcp@latest"]
     }
   }
 }
+```
+
+The `@latest` tag re-resolves the newest version on every launch, so it stays
+current on its own. Needs Node 20+. No API key, no account, no auth.
+
+Config paths, VS Code, offline/global install, and troubleshooting are in
+[install.md](install.md).
+
+### Let an agent install it
+
+Paste this into any coding agent:
+
+> Install the `purdue-mcp` MCP server for me — public real-time Purdue University
+> data (dining menus, live gym occupancy, courses, bus times, events, athletics,
+> library hours, weather). On npm as `purdue-mcp`, needs Node 20+, no API key.
+> Detect my MCP client and register it with `npx -y purdue-mcp@latest` as the
+> command, using the `@latest` tag so it stays current. Then verify it connects
+> and tell me which tools it exposes.
+> Full instructions: https://raw.githubusercontent.com/sharziki/purdue-mcp/main/install.md
+
+### Or run from source
+
+```bash
+git clone https://github.com/sharziki/purdue-mcp && cd purdue-mcp
+npm install && npm run build
 ```
 
 ## Tools
