@@ -2,7 +2,7 @@
 
 One MCP server for **all public, real-time Purdue University data** — dining menus, live gym occupancy, the course catalog, bus times, campus events, student orgs, library hours, athletics, news, and weather. Point any MCP client (Claude Code, Claude Desktop, Cursor, …) at it and ask "what's for dinner at Wiley", "how busy is the CoRec", or "when's the next bus from the PMU".
 
-**24 tools across 10 public sources.**
+**29 tools across 13 public sources.**
 
 Everything it reads is public and unauthenticated. It never touches a student account, grades, schedules, bursar records, or anything behind a Purdue login.
 
@@ -72,6 +72,14 @@ npm install && npm run build
 | `dining_item_nutrition` | Full nutrition panel for any menu item |
 | `dining_line_length` | Crowdsourced live line-length reports (populated around peak meal hours) |
 
+### Registration — live seats (Purdue Banner)
+
+| Tool | What it answers |
+| --- | --- |
+| `course_availability` | **How many seats are actually open right now** in each section, with waitlists, CRNs, meeting times, instructors |
+| `section_details` | Seats, waitlist, prerequisites, and major/level restrictions for one CRN — "why can't I register for this" |
+| `banner_terms` | Which terms are open for registration vs. view-only |
+
 ### Academics — Purdue.io course catalog
 
 | Tool | What it answers |
@@ -89,6 +97,8 @@ npm install && npm run build
 | `search_events` | Official university calendar — lectures, athletics, career fairs, deadlines |
 | `search_student_orgs` | ~1,200 registered student organizations on BoilerLink |
 | `search_club_events` | Upcoming club events: callouts, socials, meetings |
+| `reddit_purdue` | What students are actually talking about on r/Purdue (unofficial) |
+| `purdue_exponent` | Purdue Exponent student newspaper — campus reporting, editorially independent |
 
 ### Facilities
 
@@ -133,6 +143,7 @@ Dates default to **today in the campus timezone** (`America/Indiana/Indianapolis
 | Source | Endpoint | Notes |
 | --- | --- | --- |
 | Purdue Dining (HFS) | `api.hfs.purdue.edu/menus/v2` | Official, public, unauthenticated |
+| Purdue Banner | `selfservice.mypurdue.purdue.edu/prod` | Public class search — **no login**. Authoritative for seats/waitlist/prereqs. HTML, so parsing is version-sensitive. |
 | Purdue.io | `api.purdue.io/odata` | Community-run open-source catalog mirror ([Purdue-io/PurdueApi](https://github.com/Purdue-io/PurdueApi)) |
 | Purdue Events | `events.purdue.edu/api/2` | Localist public API |
 | BoilerLink | `purdue.campuslabs.com/engage/api/discovery` | Anthology Engage public discovery API |
@@ -141,6 +152,8 @@ Dates default to **today in the campus timezone** (`America/Indiana/Indianapolis
 | Purdue Athletics | `purduesports.com/website-api` | Official athletics site's public JSON API |
 | Purdue Newsroom / Registrar | `purdue.edu/{newsroom,registrar}/wp-json` | WordPress REST API |
 | CityBus | `bus.gocitybus.com` GTFS | Static schedule feed; **no public real-time feed exists** |
+| r/Purdue | `reddit.com/r/Purdue/.rss` | Unofficial student chatter |
+| Purdue Exponent | `purdueexponent.org` RSS | Independent student newspaper |
 | NOAA / NWS | `api.weather.gov` | Public federal API |
 
 Responses are cached in-process with short TTLs (30s–24h depending on how fast the data moves) to stay a polite client. Nothing is persisted to disk.
@@ -150,7 +163,11 @@ Responses are cached in-process with short TTLs (30s–24h depending on how fast
 - **Laundry machine availability** — Purdue moved residence-hall laundry to CSCPay Mobile, which has no public web status page. The old `washalertweb` host the community app scraped no longer resolves.
 - **Real-time bus positions** — CityBus publishes GTFS static only. No GTFS-Realtime feed is listed on Transitland or the Mobility Database, and MyRide's backend is not public. `bus_next_departures` returns timetable times.
 - **Parking garage availability** — Purdue Parking publishes no live space counts.
-- **Seat availability / waitlists** — lives behind the myPurdue login. Out of scope by design.
+- **Grades, personal schedules, bursar** — behind the myPurdue login. Out of scope by design.
+- **Library study-room availability** — LibCal's spaces API requires OAuth credentials the library would have to issue.
+- **Laundry (again)** — CSCPay has no public read API of any kind.
+
+Seat availability *was* on this list — it turned out Banner's class search needs no login, so `course_availability` now covers it.
 
 ## Adding a source
 

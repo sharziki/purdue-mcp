@@ -57,17 +57,48 @@ export function qs(params: Record<string, string | number | undefined | null>): 
   return s ? `?${s}` : "";
 }
 
-/** Strip HTML tags and collapse whitespace — most upstreams return HTML blobs. */
+const ENTITIES: Record<string, string> = {
+  nbsp: " ",
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  "#39": "'",
+  rsquo: "'",
+  lsquo: "'",
+  ldquo: '"',
+  rdquo: '"',
+  mdash: "—",
+  ndash: "–",
+  hellip: "…",
+};
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&([a-z#0-9]+);/gi, (m, name) => ENTITIES[name.toLowerCase()] ?? m);
+}
+
+/**
+ * Strip HTML tags and collapse whitespace — most upstreams return HTML blobs.
+ * Runs twice, because some feeds (Reddit's Atom) escape markup inside markup.
+ */
 export function stripHtml(s: string | null | undefined, max = 600): string {
   if (!s) return "";
-  const out = s
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
+  let out = s;
+  for (let pass = 0; pass < 2; pass++) {
+    out = decodeEntities(
+      out
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<\/(p|div|tr|li)>/gi, "\n")
+        .replace(/<[^>]+>/g, ""),
+    );
+    if (!/<[a-z!/]/i.test(out)) break;
+  }
+  out = out
     .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&#39;|&rsquo;/g, "'")
-    .replace(/&quot;|&ldquo;|&rdquo;/g, '"')
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
