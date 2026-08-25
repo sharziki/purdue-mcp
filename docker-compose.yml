@@ -1,0 +1,7 @@
+services:
+  purdue-mcp:
+    build: .
+    container_name: purdue-mcp
+    restart: unless-stopped
+    ports:
+      - "172.17.0.1:8971:8971"

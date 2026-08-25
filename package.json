@@ -5,7 +5,8 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "purdue-mcp": "dist/index.js"
+    "purdue-mcp": "dist/index.js",
+    "purdue-mcp-http": "dist/http.js"
   },
   "files": [
     "dist",
@@ -29,7 +30,8 @@
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "prepublishOnly": "npm run build",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "start:http": "node dist/http.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
