@@ -108,11 +108,13 @@ const CAMPUS: Record<string, Building> = BUILDINGS;
 
 /** How a location is paid for. HFS does not expose this, so it is derived from
  *  the category it already returns. Dining Courts are all-you-care-to-eat and
- *  take a swipe; Quick Bites are retail. On-the-GO! is the one worth checking
- *  against the current meal plan before trusting. */
+ *  take a swipe. Everything else is retail and comes out of dining dollars --
+ *  including On-the-GO!, which the name makes sound like a swipe exchange and
+ *  is not (confirmed by a student, 2026-08-27). Getting this wrong sends
+ *  someone to a counter their swipe will not cover. */
 const PAYMENT: Record<string, string> = {
   "Dining Courts": "meal swipe",
-  "On-the-GO!": "meal swipe (grab-and-go exchange)",
+  "On-the-GO!": "dining dollars",
   "Quick Bites": "dining dollars",
 };
 

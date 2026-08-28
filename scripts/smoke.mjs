@@ -61,6 +61,26 @@ for (const [name, args] of calls) {
   }
 }
 
+// Payment is derived from the category, not published by HFS, and getting it
+// wrong sends someone to a counter their swipe will not cover. On-the-GO! reads
+// like a swipe exchange and is retail.
+const read = async (args) =>
+  (await client.callTool({ name: "dining_nearby", arguments: { place: "PMU", limit: 12, ...args } }))
+    .content.map((c) => c.text).join("\n");
+const swipe = await read({ payment: "meal swipe" });
+const dollars = await read({ payment: "dining dollars" });
+const wrong = [];
+if (!/Dining Courts/.test(swipe)) wrong.push("no dining court on a swipe");
+if (/On-the-GO!|Quick Bites/.test(swipe)) wrong.push("retail listed under meal swipe");
+if (!/On-the-GO!/.test(dollars)) wrong.push("On-the-GO! missing from dining dollars");
+if (/Dining Courts/.test(dollars)) wrong.push("dining court listed under dining dollars");
+if (wrong.length) {
+  failures++;
+  console.log(`--- FAIL payment split: ${wrong.join("; ")}`);
+} else {
+  console.log("--- ok  payment split: courts take a swipe, everything else is dining dollars");
+}
+
 await client.close();
 console.log(failures ? `\n${failures} failing tool call(s)` : "\nall tool calls returned data");
 process.exit(failures ? 1 : 0);
