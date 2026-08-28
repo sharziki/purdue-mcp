@@ -122,6 +122,18 @@ function paymentFor(type: string): string {
   return PAYMENT[type] ?? "unknown";
 }
 
+/** A caller asking for "swipe" means "meal swipe". A strict enum rejected that
+ *  outright, the tool call failed, and Rex fell back to a content-free "on it"
+ *  -- the lookup lost to a vocabulary mismatch. Take the shorthand people and
+ *  models actually use. */
+function normalizePayment(raw: string | undefined): "meal swipe" | "dining dollars" | null {
+  const v = String(raw ?? "").trim().toLowerCase().replace(/[^a-z ]/g, "");
+  if (!v) return null;
+  if (/(swipe|meal plan|board plan)/.test(v)) return "meal swipe";
+  if (/(dollar|boiler express|retail|cash|card|paid|points)/.test(v)) return "dining dollars";
+  return null;
+}
+
 /** Straight-line metres. Campus is ~1.5km across, so great-circle is plenty and
  *  a routing call per venue would cost more than the accuracy is worth. */
 function metresBetween(aLat: number, aLon: number, bLat: number, bLon: number): number {
@@ -201,9 +213,12 @@ export function registerDining(server: McpServer) {
         lon: z.number().optional().describe("Longitude."),
         open_now: z.boolean().optional().describe("Only return locations serving right now."),
         payment: z
-          .enum(["meal swipe", "dining dollars"])
+          .string()
           .optional()
-          .describe("Only return locations taking this form of payment."),
+          .describe(
+            "Only return locations taking this form of payment: 'meal swipe' or 'dining dollars'. " +
+              "Shorthand works too ('swipe', 'swipes', 'dollars', 'boiler express').",
+          ),
         limit: z.number().int().min(1).max(12).optional().describe("How many to return (default 5)."),
       },
     },
@@ -237,13 +252,19 @@ export function registerDining(server: McpServer) {
         .sort((a, b) => a.metres - b.metres);
 
       if (open_now) rows = rows.filter((r) => r.status.startsWith("OPEN"));
-      if (payment) rows = rows.filter((r) => r.pay.startsWith(payment));
+      const wantPayment = normalizePayment(payment);
+      if (payment && !wantPayment) {
+        return text(
+          `I don't know the payment type "${payment}". Use "meal swipe" or "dining dollars".`,
+        );
+      }
+      if (wantPayment) rows = rows.filter((r) => r.pay === wantPayment);
       rows = rows.slice(0, limit ?? 5);
 
       if (!rows.length) {
         return text(
           `Nothing near ${originLabel} matches` +
-            `${open_now ? " and is open right now" : ""}${payment ? ` on ${payment}` : ""}.`,
+            `${open_now ? " and is open right now" : ""}${wantPayment ? ` on ${wantPayment}` : ""}.`,
         );
       }
 
