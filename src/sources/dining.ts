@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getJSON } from "../lib/http.js";
 import { campusNowLabel, campusToday, isDateString, prettyStamp, prettyTime } from "../lib/time.js";
 import { text, type ToolResult } from "../lib/result.js";
+import { BUILDINGS, type Building } from "../data/buildings.js";
 
 const BASE = "https://api.hfs.purdue.edu/menus/v2";
 
@@ -103,6 +104,54 @@ function hasAllergen(item: Item, name: string): boolean {
   return (item.Allergens ?? []).some((a) => a.Name.toLowerCase() === n && a.Value);
 }
 
+const CAMPUS: Record<string, Building> = BUILDINGS;
+
+/** How a location is paid for. HFS does not expose this, so it is derived from
+ *  the category it already returns. Dining Courts are all-you-care-to-eat and
+ *  take a swipe; Quick Bites are retail. On-the-GO! is the one worth checking
+ *  against the current meal plan before trusting. */
+const PAYMENT: Record<string, string> = {
+  "Dining Courts": "meal swipe",
+  "On-the-GO!": "meal swipe (grab-and-go exchange)",
+  "Quick Bites": "dining dollars",
+};
+
+function paymentFor(type: string): string {
+  return PAYMENT[type] ?? "unknown";
+}
+
+/** Straight-line metres. Campus is ~1.5km across, so great-circle is plenty and
+ *  a routing call per venue would cost more than the accuracy is worth. */
+function metresBetween(aLat: number, aLon: number, bLat: number, bLon: number): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLon = toRad(bLon - aLon);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function walkLabel(metres: number): string {
+  const mins = Math.max(1, Math.round(metres / 80)); // ~4.8 km/h
+  return `${Math.round(metres)}m · ~${mins} min walk`;
+}
+
+/** "PMU", "pmu", "Purdue Memorial Union", "beering" -> a coordinate. */
+export function resolvePlace(query: string): (Building & { code: string }) | null {
+  const q = query.trim();
+  if (!q) return null;
+  const upper = q.toUpperCase();
+  if (CAMPUS[upper]) return { code: upper, ...CAMPUS[upper] };
+  const needle = q.toLowerCase();
+  const entries = Object.entries(CAMPUS);
+  const exact = entries.find(([, b]) => b.name.toLowerCase() === needle);
+  if (exact) return { code: exact[0], ...exact[1] };
+  const partial = entries.find(([, b]) => b.name.toLowerCase().includes(needle));
+  return partial ? { code: partial[0], ...partial[1] } : null;
+}
+
 export function registerDining(server: McpServer) {
   server.registerTool(
     "dining_locations",
@@ -132,6 +181,78 @@ export function registerDining(server: McpServer) {
         )
         .join("\n\n");
       return text(`Campus time: ${campusNowLabel()}\n\n${body}`);
+    },
+  );
+
+  server.registerTool(
+    "dining_nearby",
+    {
+      title: "Find dining near a place on campus",
+      description:
+        "Dining locations closest to a campus building or coordinate, nearest first, with walking distance, whether they are open right now, the next meal period, and whether they take a meal swipe or dining dollars. Give a building short code or name ('PMU', 'Beering', 'Lawson') or a lat/lon. Source: Purdue HFS dining API (live) plus a bundled campus coordinate table.",
+      inputSchema: {
+        place: z
+          .string()
+          .optional()
+          .describe("Campus building short code or name, e.g. 'PMU', 'BHEE', 'Wilmeth'."),
+        lat: z.number().optional().describe("Latitude, if you already have one."),
+        lon: z.number().optional().describe("Longitude."),
+        open_now: z.boolean().optional().describe("Only return locations serving right now."),
+        payment: z
+          .enum(["meal swipe", "dining dollars"])
+          .optional()
+          .describe("Only return locations taking this form of payment."),
+        limit: z.number().int().min(1).max(12).optional().describe("How many to return (default 5)."),
+      },
+    },
+    async ({ place, lat, lon, open_now, payment, limit }): Promise<ToolResult> => {
+      let originLat = lat;
+      let originLon = lon;
+      let originLabel = "your location";
+      if (typeof originLat !== "number" || typeof originLon !== "number") {
+        if (!place) return text("Give me a building (e.g. 'PMU') or a lat/lon.");
+        const hit = resolvePlace(place);
+        if (!hit) {
+          return text(
+            `I don't have a coordinate for "${place}". Try a short code like PMU, LWSN or WALC, ` +
+              `or send a lat/lon.`,
+          );
+        }
+        originLat = hit.lat;
+        originLon = hit.lon;
+        originLabel = `${hit.name} (${hit.code})`;
+      }
+
+      const all = await locations();
+      let rows = all
+        .filter((l) => typeof l.Latitude === "number" && typeof l.Longitude === "number")
+        .map((loc) => ({
+          loc,
+          status: statusNow(loc),
+          pay: paymentFor(loc.Type),
+          metres: metresBetween(originLat as number, originLon as number, loc.Latitude, loc.Longitude),
+        }))
+        .sort((a, b) => a.metres - b.metres);
+
+      if (open_now) rows = rows.filter((r) => r.status.startsWith("OPEN"));
+      if (payment) rows = rows.filter((r) => r.pay.startsWith(payment));
+      rows = rows.slice(0, limit ?? 5);
+
+      if (!rows.length) {
+        return text(
+          `Nothing near ${originLabel} matches` +
+            `${open_now ? " and is open right now" : ""}${payment ? ` on ${payment}` : ""}.`,
+        );
+      }
+
+      const body = rows
+        .map(
+          ({ loc, status, pay, metres }) =>
+            `${loc.Name} (${loc.Type}) — ${pay}\n  ${walkLabel(metres)}\n  ${status}\n  ${loc.Address.Street}` +
+            `${loc.Url ? `\n  ${loc.Url}` : ""}`,
+        )
+        .join("\n\n");
+      return text(`From ${originLabel} · campus time ${campusNowLabel()}\n\n${body}`);
     },
   );
 

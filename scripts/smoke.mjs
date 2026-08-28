@@ -14,6 +14,8 @@ console.log(`registered tools (${tools.length}): ${tools.map((t) => t.name).join
 
 const calls = [
   ["dining_locations", { open_now: false }],
+  ["dining_nearby", { place: "PMU", limit: 3 }],
+  ["dining_nearby", { place: "Beering", payment: "dining dollars", limit: 2 }],
   ["dining_menu", { location: "Wiley", meal: "Lunch" }],
   ["dining_find_item", { query: "chicken" }],
   ["dining_line_length", {}],

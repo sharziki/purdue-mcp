@@ -14,7 +14,8 @@ import { registerCommunity } from "./sources/community.js";
 export const INSTRUCTIONS = [
   "Public, real-time Purdue University (West Lafayette) data in one place.",
   "",
-  "Dining: dining_locations, dining_menu, dining_find_item, dining_item_nutrition, dining_line_length.",
+  "Dining: dining_locations, dining_nearby, dining_menu, dining_find_item, dining_item_nutrition, dining_line_length.",
+  "  dining_nearby answers 'I am at X, where should I eat' -- nearest first, with walk time and whether it takes a swipe or dining dollars.",
   "Academics (catalog): list_terms, list_subjects, search_courses, course_sections,",
   "  find_building, academic_calendar.",
   "Registration (LIVE seats — prefer these for 'can I get in'): course_availability,",
