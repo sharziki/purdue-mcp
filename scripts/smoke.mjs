@@ -27,10 +27,12 @@ const calls = [
   ["search_events", { days: 14, limit: 3 }],
   ["search_student_orgs", { query: "robotics", limit: 3 }],
   ["search_student_orgs", { category: "Gaming", limit: 3 }],
+  ["search_student_orgs", { query: "a cappella", limit: 2, include_links: true }],
   ["student_org_profile", { org: "Boiler Blockchain", events: 2 }],
   ["student_org_profile", { org: "https://boilerlink.purdue.edu/organization/boilerblockchain", events: 0 }],
   ["search_club_events", { limit: 3 }],
-  ["search_club_events", { free_food: true, days: 30, limit: 3 }],
+  ["search_club_events", { perk: "free food", days: 30, limit: 3 }],
+  ["search_club_events", { perk: "free stuff", days: 30, limit: 2 }],
   ["search_club_events", { category: "Callout", days: 30, limit: 3 }],
   ["search_club_events", { theme: "Social", limit: 2 }],
   ["boilerlink_categories", {}],
@@ -99,6 +101,40 @@ if (!eventId) {
     failures++;
     console.log("--- FAIL club_event_details returned a different event");
   }
+}
+
+// The local index is the whole reason org search stopped being BoilerLink's
+// keyword OR. These three are exactly what upstream gets wrong: a typo returns
+// nothing, "rock climbing" ranks Rock Band with the climbing clubs, and a
+// club's Instagram is not in the search index at all.
+const typo = await call("search_student_orgs", { query: "robotcs", limit: 5 });
+if (!/Robot/i.test(typo)) {
+  failures++;
+  console.log(`--- FAIL typo query found no robotics clubs:\n${typo.split("\n")[0]}`);
+} else {
+  console.log("--- ok  typo 'robotcs' still finds the robotics clubs\n");
+}
+
+const phrase = await call("search_student_orgs", { query: "rock climbing", limit: 5 });
+const climbAt = phrase.indexOf("Climbing Club");
+const rockBandAt = phrase.indexOf("Music Gaming");
+if (climbAt < 0 || (rockBandAt >= 0 && rockBandAt < climbAt)) {
+  failures++;
+  console.log("--- FAIL 'rock climbing' did not rank a climbing club first");
+} else {
+  console.log("--- ok  'rock climbing' ranks climbing clubs above Rock Band\n");
+}
+
+const withLinks = await call("search_student_orgs", {
+  query: "a cappella",
+  limit: 3,
+  include_links: true,
+});
+if (!/instagram\.com/i.test(withLinks)) {
+  failures++;
+  console.log("--- FAIL include_links returned no socials");
+} else {
+  console.log("--- ok  include_links returns email/website/socials\n");
 }
 
 // Payment is derived from the category, not published by HFS, and getting it

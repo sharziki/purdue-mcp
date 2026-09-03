@@ -95,9 +95,9 @@ npm install && npm run build
 | Tool | What it answers |
 | --- | --- |
 | `search_events` | Official university calendar — lectures, athletics, career fairs, deadlines |
-| `search_student_orgs` | ~1,200 registered student organizations on BoilerLink, by keyword and/or category |
-| `student_org_profile` | One org in full: mission, contact email, website and socials, categories, whether it's taking members, next events |
-| `search_club_events` | Upcoming club events: callouts, socials, meetings — filter by host org, theme, category, free food, or date window |
+| `search_student_orgs` | ~1,200 student orgs, searched by what someone is *into* — typo-tolerant, understands campus synonyms, reads full descriptions. `include_links` returns each club's email, website and socials |
+| `student_org_profile` | One org in full: mission, contact email and phone, website and every social account, categories, whether it's taking members, next events |
+| `search_club_events` | Upcoming club events: callouts, socials, meetings — same search, plus filters for host org, theme, category, free food/free stuff, and date window |
 | `club_event_details` | One club event in full: complete description, street address and coordinates, perks, RSVP count and spots left |
 | `boilerlink_categories` | The exact org/event category and theme names the two searches accept |
 | `reddit_purdue` | What students are actually talking about on r/Purdue (unofficial) |
@@ -149,7 +149,7 @@ Dates default to **today in the campus timezone** (`America/Indiana/Indianapolis
 | Purdue Banner | `selfservice.mypurdue.purdue.edu/prod` | Public class search — **no login**. Authoritative for seats/waitlist/prereqs. HTML, so parsing is version-sensitive. |
 | Purdue.io | `api.purdue.io/odata` | Community-run open-source catalog mirror ([Purdue-io/PurdueApi](https://github.com/Purdue-io/PurdueApi)) |
 | Purdue Events | `events.purdue.edu/api/2` | Localist public API |
-| BoilerLink | `boilerlink.purdue.edu/api/discovery` | Anthology Engage public discovery API. Same host students use; `purdue.campuslabs.com/engage` serves it too. Org **website keys are not in the search index** — they only resolve through `/organization/bykey/{key}`. The only benefit token the event filter accepts is `FreeFood`. |
+| BoilerLink | `boilerlink.purdue.edu/api/discovery` | Anthology Engage public discovery API. Same host students use; `purdue.campuslabs.com/engage` serves it too. Org **website keys are not in the search index** — they only resolve through `/organization/bykey/{key}`, which is also the only place email and socials live. Upstream search is plain keyword OR, so all 1,206 orgs (13 requests) and ~1,500 upcoming events (4 requests) are crawled once and ranked locally. |
 | Purdue RecWell | `goboardapi.azurewebsites.net` (Connect2) | Live occupancy counters; account key is the one Purdue's own public widget ships |
 | Purdue Libraries | `calendar.lib.purdue.edu` | Springshare LibCal public hours endpoints |
 | Purdue Athletics | `purduesports.com/website-api` | Official athletics site's public JSON API |

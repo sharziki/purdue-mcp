@@ -1,17 +1,19 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getJSON, qs, stripHtml } from "../lib/http.js";
-import { campusIso, campusToday, prettyDate, prettyStamp, shiftDate, stampRange } from "../lib/time.js";
+import { campusIso, campusToday, prettyDate, shiftDate, stampRange } from "../lib/time.js";
+import { buildIndex, searchIndex, type TextIndex } from "../lib/textsearch.js";
 import { text, type ToolResult } from "../lib/result.js";
 
 // BoilerLink is Purdue's Anthology Engage instance. boilerlink.purdue.edu is
 // the vanity host students see and serves the same public discovery API as
-// purdue.campuslabs.com/engage — no auth, no session cookie.
+// purdue.campuslabs.com/engage - no auth, no session cookie.
 const SITE = "https://boilerlink.purdue.edu";
 const API = `${SITE}/api/discovery`;
 
-const ORG_TTL = 30 * 60_000;
-const EVENT_TTL = 5 * 60_000;
+const ORG_TTL = 6 * 60 * 60_000;
+const EVENT_TTL = 10 * 60_000;
+const DETAIL_TTL = 60 * 60_000;
 
 type OrgHit = {
   Id: string;
@@ -40,11 +42,25 @@ type EventHit = {
   categoryNames?: string[];
   benefitNames?: string[];
   rsvpTotal?: number;
-  latitude?: string | null;
-  longitude?: string | null;
 };
 
 type EventSearch = { "@odata.count": number; value: EventHit[] };
+
+type OrgDetail = {
+  id: number;
+  name: string;
+  shortName: string | null;
+  websiteKey: string;
+  email: string | null;
+  description: string | null;
+  summary: string | null;
+  status: string;
+  showJoin: boolean;
+  startDate: string | null;
+  socialMedia: Record<string, string | null> | null;
+  organizationType?: { name: string } | null;
+  contactInfo?: { phoneNumber: string | null }[];
+};
 
 type Category = { id: number; name: string };
 type CategoryPage = { totalItems: number; items: Category[] };
@@ -65,17 +81,117 @@ const THEMES = [
   "ThoughtfulLearning",
 ] as const;
 
+// ---------------------------------------------------------------------------
+// Local corpora
+//
+// BoilerLink's own search is plain keyword OR: "robotcs" returns nothing and
+// "rock climbing" ranks Rock Band next to the climbing clubs. Both corpora are
+// small enough to hold locally (1,206 orgs in 13 requests, ~1,500 upcoming
+// events in 4), so every keyword query is answered from a local BM25 index
+// instead. The upstream is still the only source of the data.
+// ---------------------------------------------------------------------------
+
+type Corpus<T> = { docs: T[]; index: TextIndex<T> };
+
+function memo<T>(ttlMs: number, load: () => Promise<Corpus<T>>) {
+  let at = 0;
+  let pending: Promise<Corpus<T>> | null = null;
+  return () => {
+    if (!pending || Date.now() - at > ttlMs) {
+      at = Date.now();
+      pending = load().catch((e) => {
+        pending = null;
+        throw e;
+      });
+    }
+    return pending;
+  };
+}
+
+async function crawl<T>(
+  url: (skip: number, page: number) => string,
+  pick: (body: any) => { total: number; rows: T[] },
+  pageSize: number,
+  maxPages: number,
+  ttlMs: number,
+): Promise<T[]> {
+  const rows: T[] = [];
+  for (let page = 0; page < maxPages; page++) {
+    const body = await getJSON<any>(url(page * pageSize, page), { ttlMs, timeoutMs: 30_000 });
+    const { total, rows: batch } = pick(body);
+    rows.push(...batch);
+    if (!batch.length || rows.length >= total) break;
+  }
+  return rows;
+}
+
+const orgFields = (o: OrgHit): [string | null | undefined, number][] => [
+  [o.Name, 8],
+  [o.ShortName, 6],
+  [(o.CategoryNames ?? []).join(" "), 4],
+  [o.Summary, 2],
+  [stripHtml(o.Description, 4000), 1],
+];
+
+const eventFields = (e: EventHit): [string | null | undefined, number][] => [
+  [e.name, 8],
+  [e.organizationName, 5],
+  [[e.theme, ...(e.categoryNames ?? []), ...(e.benefitNames ?? [])].join(" "), 3],
+  [e.location, 2],
+  [stripHtml(e.description, 4000), 1],
+];
+
+const orgIndex = (docs: OrgHit[]) =>
+  buildIndex(docs.map((o) => ({ value: o, fields: orgFields(o) })));
+
+const eventIndex = (docs: EventHit[]) =>
+  buildIndex(docs.map((e) => ({ value: e, fields: eventFields(e) })));
+
+const orgCorpus = memo<OrgHit>(ORG_TTL, async () => {
+  const docs = await crawl<OrgHit>(
+    (skip) =>
+      `${API}/search/organizations${qs({ top: 100, skip, "orderBy[0]": "UpperName asc" })}`,
+    (b: OrgSearch) => ({ total: b["@odata.count"], rows: b.value ?? [] }),
+    100,
+    20,
+    ORG_TTL,
+  );
+  return { docs, index: orgIndex(docs) };
+});
+
+const eventCorpus = memo<EventHit>(EVENT_TTL, async () => {
+  const from = new Date().toISOString();
+  const docs = await crawl<EventHit>(
+    (skip) =>
+      `${API}/event/search${qs({
+        take: 500,
+        skip,
+        endsAfter: from,
+        status: "Approved",
+        orderByField: "startsOn",
+        orderByDirection: "ascending",
+      })}`,
+    (b: EventSearch) => ({ total: b["@odata.count"], rows: b.value ?? [] }),
+    500,
+    10,
+    EVENT_TTL,
+  );
+  return { docs, index: eventIndex(docs) };
+});
+
+// ---------------------------------------------------------------------------
+
 const categories = (path: string) =>
   getJSON<CategoryPage>(`${API}/${path}?take=100`, { ttlMs: 12 * 60 * 60_000 });
 
-/** Match a user-typed category name against the live list. Returns its id. */
-async function categoryId(path: string, name: string): Promise<number | null> {
+/** Match a user-typed category name against the live list. */
+async function matchCategory(path: string, name: string): Promise<string | null> {
   const { items } = await categories(path);
   const want = name.trim().toLowerCase();
   const hit =
     items.find((c) => c.name.trim().toLowerCase() === want) ??
     items.find((c) => c.name.toLowerCase().includes(want));
-  return hit?.id ?? null;
+  return hit?.name.trim() ?? null;
 }
 
 /** Resolve "cs club", "boilerblockchain", or a BoilerLink URL to one org. */
@@ -87,40 +203,56 @@ async function findOrg(input: string): Promise<OrgHit | null> {
   // through the by-key endpoint. A miss there is a 404, not an empty result.
   if (/^[A-Za-z0-9._-]+$/.test(key)) {
     try {
-      const d = await getJSON<{ id: number; name: string; websiteKey: string }>(
-        `${API}/organization/bykey/${encodeURIComponent(key)}`,
-        { ttlMs: ORG_TTL },
+      const d = await getJSON<OrgDetail>(`${API}/organization/bykey/${encodeURIComponent(key)}`, {
+        ttlMs: DETAIL_TTL,
+      });
+      const { docs } = await orgCorpus();
+      return (
+        docs.find((o) => o.WebsiteKey === d.websiteKey) ?? {
+          Id: String(d.id),
+          Name: d.name,
+          ShortName: d.shortName,
+          WebsiteKey: d.websiteKey,
+        }
       );
-      // Categories live in the search index only; look them up by exact name.
-      const idx = await getJSON<OrgSearch>(
-        `${API}/search/organizations${qs({ query: d.name, top: 25 })}`,
-        { ttlMs: ORG_TTL },
-      );
-      const enriched = (idx.value ?? []).find((o) => o.WebsiteKey === d.websiteKey);
-      return enriched ?? { Id: String(d.id), Name: d.name, ShortName: null, WebsiteKey: d.websiteKey };
     } catch {
-      // Not a website key — fall through to a name search.
+      // Not a website key - fall through to a name search.
     }
   }
 
-  const data = await getJSON<OrgSearch>(
-    `${API}/search/organizations${qs({ query: raw, top: 25 })}`,
-    { ttlMs: ORG_TTL },
-  );
-  const hits = data.value ?? [];
+  const { docs, index } = await orgCorpus();
   const want = raw.toLowerCase();
-  return (
-    hits.find((o) => o.Name.trim().toLowerCase() === want) ??
-    hits.find((o) => o.ShortName?.trim().toLowerCase() === want) ??
-    hits[0] ??
-    null
-  );
+  const exact =
+    docs.find((o) => o.Name.trim().toLowerCase() === want) ??
+    docs.find((o) => o.ShortName?.trim().toLowerCase() === want);
+  return exact ?? searchIndex(index, raw, 1)[0]?.value ?? null;
 }
 
-function formatOrg(o: OrgHit): string {
-  const cats = o.CategoryNames?.length ? `\n  categories: ${o.CategoryNames.map((c) => c.trim()).join(", ")}` : "";
+/** Website and socials live only on the detail endpoint, never in the index. */
+function links(d: OrgDetail): string[] {
+  const out = Object.entries(d.socialMedia ?? {})
+    .filter(([k, v]) => v && k !== "TwitterUserName" && !/^Google(Plus|Calendar)/.test(k))
+    .map(([k, v]) => `${k.replace(/Url$/, "").replace("ExternalWebsite", "Website")}: ${v}`);
+  if (d.socialMedia?.TwitterUserName) out.push(`Twitter: @${d.socialMedia.TwitterUserName}`);
+  if (d.email) out.unshift(`Email: ${d.email}`);
+  const phone = d.contactInfo?.find((c) => c.phoneNumber)?.phoneNumber;
+  if (phone) out.push(`Phone: ${phone}`);
+  return out;
+}
+
+const detail = (key: string) =>
+  getJSON<OrgDetail>(`${API}/organization/bykey/${encodeURIComponent(key)}`, { ttlMs: DETAIL_TTL });
+
+function formatOrg(o: OrgHit, contact?: string[]): string {
+  const cats = o.CategoryNames?.length
+    ? `\n  categories: ${o.CategoryNames.map((c) => c.trim()).join(", ")}`
+    : "";
   const blurb = stripHtml(o.Summary || o.Description, 240);
-  return `${o.Name.trim()}${o.ShortName && o.ShortName.trim() !== o.Name.trim() ? ` (${o.ShortName.trim()})` : ""}${cats}${blurb ? `\n  ${blurb}` : ""}\n  ${orgUrl(o.WebsiteKey)}`;
+  const name = `${o.Name.trim()}${o.ShortName && o.ShortName.trim() !== o.Name.trim() ? ` (${o.ShortName.trim()})` : ""}`;
+  return (
+    `${name}${cats}${blurb ? `\n  ${blurb}` : ""}\n  ${orgUrl(o.WebsiteKey)}` +
+    (contact?.length ? `\n  ${contact.join("\n  ")}` : "")
+  );
 }
 
 function formatEvent(e: EventHit): string {
@@ -139,53 +271,79 @@ function formatEvent(e: EventHit): string {
   );
 }
 
-async function eventSearch(params: Record<string, string | number | undefined>) {
-  return getJSON<EventSearch>(`${API}/event/search${qs(params)}`, { ttlMs: EVENT_TTL });
-}
-
 export function registerBoilerLink(server: McpServer) {
   server.registerTool(
     "search_student_orgs",
     {
       title: "Search Purdue student organizations",
       description:
-        "Search BoilerLink's directory of ~1,200 registered student organizations by keyword and/or category (Club Sports, Gaming, Finance, Religious and Spiritual, …). Use boilerlink_categories for the category list, student_org_profile for one org's contacts and links. Source: BoilerLink / Anthology Engage (live).",
+        "Find student organizations by what someone is actually into — 'clubs for someone into quant trading', 'anime', 'rock climbing'. Searches every word of all ~1,200 orgs' names, missions and full descriptions, tolerates typos, and understands campus synonyms, so it finds clubs that never use the word you typed. Set include_links to also return each club's email, website, Instagram and other socials — do that whenever someone asks how to reach or follow a club. Source: BoilerLink / Anthology Engage (live).",
       inputSchema: {
-        query: z.string().optional().describe("Keyword, e.g. 'robotics', 'a cappella', 'finance'."),
+        query: z
+          .string()
+          .optional()
+          .describe("What they're into, e.g. 'robotics', 'a cappella', 'quant finance'."),
         category: z
           .string()
           .optional()
           .describe("Org category name, e.g. 'Club Sports'. See boilerlink_categories."),
+        include_links: z
+          .boolean()
+          .optional()
+          .describe("Fetch email, website and socials for each result (first 10). Default false."),
         limit: z.number().int().min(1).max(100).optional().describe("Default 20."),
       },
     },
-    async ({ query, category, limit }): Promise<ToolResult> => {
-      let filter: string | undefined;
+    async ({ query, category, include_links, limit }): Promise<ToolResult> => {
+      const n = limit ?? 20;
+      const { docs, index } = await orgCorpus();
+
+      let pool = docs;
+      let catLabel = "";
       if (category) {
-        const id = await categoryId("organization/category", category);
-        if (!id)
+        const name = await matchCategory("organization/category", category);
+        if (!name)
           return text(
             `No BoilerLink org category matches "${category}". Call boilerlink_categories for the list.`,
           );
-        filter = `CategoryIds/any(t:t eq '${id}')`;
+        catLabel = name;
+        pool = pool.filter((o) => o.CategoryNames?.some((c) => c.trim() === name));
       }
-      const data = await getJSON<OrgSearch>(
-        `${API}/search/organizations${qs({
-          query,
-          filter,
-          top: limit ?? 20,
-          "orderBy[0]": query ? undefined : "UpperName asc",
-        })}`,
-        { ttlMs: ORG_TTL },
-      );
-      const orgs = data.value ?? [];
-      const what = [query && `"${query}"`, category && `category ${category}`]
+
+      let results: OrgHit[];
+      if (query) {
+        // A category filter shrinks the corpus, so the index has to be rebuilt
+        // over the survivors - BM25 scores are relative to the collection.
+        results = searchIndex(category ? orgIndex(pool) : index, query, n).map((r) => r.value);
+      } else {
+        results = pool.slice(0, n);
+      }
+
+      const what = [query && `"${query}"`, catLabel && `category ${catLabel}`]
         .filter(Boolean)
         .join(" + ");
-      if (!orgs.length) return text(`No student organizations match ${what || "that search"}.`);
+      if (!results.length) return text(`No student organizations match ${what || "that search"}.`);
+
+      let contacts: (string[] | undefined)[] = [];
+      if (include_links) {
+        contacts = await Promise.all(
+          results.map(async (o, i) => {
+            if (i >= 10) return undefined;
+            try {
+              return links(await detail(o.WebsiteKey));
+            } catch {
+              return undefined;
+            }
+          }),
+        );
+      }
+
       return text(
-        `${orgs.length} of ${data["@odata.count"]} matching org(s)${what ? ` — ${what}` : ""}\n\n` +
-          orgs.map(formatOrg).join("\n\n"),
+        `${results.length} of ${pool.length} org(s)${what ? ` — ${what}` : ""}\n\n` +
+          results.map((o, i) => formatOrg(o, contacts[i])).join("\n\n") +
+          (include_links && results.length > 10
+            ? "\n\n(links fetched for the first 10 results only)"
+            : ""),
       );
     },
   );
@@ -195,72 +353,54 @@ export function registerBoilerLink(server: McpServer) {
     {
       title: "One student organization in full",
       description:
-        "Everything BoilerLink publishes about one student org: mission, contact email, website and social accounts, categories, active status, when it was founded, whether it is accepting new members, and its next events. Accepts an org name, a BoilerLink website key, or a BoilerLink URL. Source: BoilerLink / Anthology Engage (live).",
+        "Everything BoilerLink publishes about one student org: mission, contact email and phone, website and every social account (Instagram, LinkedIn, YouTube, Twitter, …), categories, active status, when it joined BoilerLink, whether it is accepting members, and its next events. Use this for 'what's their Instagram', 'how do I contact them', 'when do they meet'. Accepts an org name, a BoilerLink website key, or a BoilerLink URL. Source: BoilerLink / Anthology Engage (live).",
       inputSchema: {
         org: z
           .string()
           .describe("Org name, website key, or boilerlink.purdue.edu/organization/... URL."),
-        events: z.number().int().min(0).max(25).optional().describe("Upcoming events to list. Default 5."),
+        events: z
+          .number()
+          .int()
+          .min(0)
+          .max(25)
+          .optional()
+          .describe("Upcoming events to list. Default 5."),
       },
     },
     async ({ org, events }): Promise<ToolResult> => {
       const hit = await findOrg(org);
       if (!hit) return text(`No BoilerLink organization matches "${org}".`);
-
-      type OrgDetail = {
-        id: number;
-        name: string;
-        shortName: string | null;
-        websiteKey: string;
-        email: string | null;
-        description: string | null;
-        summary: string | null;
-        status: string;
-        showJoin: boolean;
-        startDate: string | null;
-        modifiedOn: string | null;
-        socialMedia: Record<string, string | null> | null;
-        organizationType?: { name: string } | null;
-        contactInfo?: { phoneNumber: string | null; street1: string | null; city: string | null }[];
-      };
-      const d = await getJSON<OrgDetail>(`${API}/organization/bykey/${hit.WebsiteKey}`, {
-        ttlMs: ORG_TTL,
-      });
-
-      const socials = Object.entries(d.socialMedia ?? {})
-        .filter(([k, v]) => v && k !== "TwitterUserName" && !/^Google(Plus|Calendar)/.test(k))
-        .map(([k, v]) => `${k.replace(/Url$/, "")}: ${v}`);
-      if (d.socialMedia?.TwitterUserName) socials.push(`Twitter: @${d.socialMedia.TwitterUserName}`);
-      const phone = d.contactInfo?.find((c) => c.phoneNumber)?.phoneNumber;
+      const d = await detail(hit.WebsiteKey);
 
       const n = events ?? 5;
       let upcoming = "";
       if (n > 0) {
-        const ev = await eventSearch({
-          organizationId: d.id,
-          take: n,
-          endsAfter: new Date().toISOString(),
-          orderByField: "startsOn",
-          orderByDirection: "ascending",
-          status: "Approved",
-        });
-        upcoming = (ev.value ?? []).length
-          ? `\n\nUpcoming events (${ev.value.length} of ${ev["@odata.count"]})\n\n${ev.value.map(formatEvent).join("\n\n")}`
-          : "\n\nNo upcoming events posted on BoilerLink.";
+        const { docs } = await eventCorpus();
+        const now = Date.now();
+        const mine = docs
+          .filter((e) => e.organizationId === d.id && new Date(e.endsOn).getTime() > now)
+          .sort((a, b) => a.startsOn.localeCompare(b.startsOn));
+        upcoming = mine.length
+          ? `\n\nUpcoming events (${Math.min(n, mine.length)} of ${mine.length})\n\n${mine
+              .slice(0, n)
+              .map(formatEvent)
+              .join("\n\n")}`
+          : "\n\nNo upcoming events posted on BoilerLink. Plenty of active clubs run on Instagram instead — check the links above.";
       }
 
+      const contact = links(d);
       const lines = [
         `${d.name.trim()}${d.shortName && d.shortName.trim() !== d.name.trim() ? ` (${d.shortName.trim()})` : ""}`,
         `  status: ${d.status}${d.showJoin ? " · accepting members" : " · not accepting members on BoilerLink"}`,
-        hit.CategoryNames?.length ? `  categories: ${hit.CategoryNames.map((c) => c.trim()).join(", ")}` : "",
+        hit.CategoryNames?.length
+          ? `  categories: ${hit.CategoryNames.map((c) => c.trim()).join(", ")}`
+          : "",
         d.organizationType?.name ? `  type: ${d.organizationType.name}` : "",
-        d.email ? `  email: ${d.email}` : "",
-        phone ? `  phone: ${phone}` : "",
         d.startDate && !d.startDate.startsWith("1969")
           ? `  on BoilerLink since: ${prettyDate(d.startDate)}`
           : "",
         `  ${orgUrl(d.websiteKey)}`,
-        socials.length ? `\nLinks\n  ${socials.join("\n  ")}` : "",
+        contact.length ? `\nContact and links\n  ${contact.join("\n  ")}` : "",
         stripHtml(d.summary, 400) ? `\n${stripHtml(d.summary, 400)}` : "",
         stripHtml(d.description, 1200) ? `\n${stripHtml(d.description, 1200)}` : "",
       ].filter(Boolean);
@@ -274,75 +414,95 @@ export function registerBoilerLink(server: McpServer) {
     {
       title: "Search student-org events on BoilerLink",
       description:
-        "Upcoming student organization events — callouts, general meetings, socials, tryouts, philanthropy — with time, room, host org and RSVP count. Filter by keyword, host org, theme, category, or free food. Distinct from the official university calendar (search_events). Source: BoilerLink / Anthology Engage (live).",
+        "Upcoming student organization events — callouts, general meetings, socials, tryouts, philanthropy — with time, room, host org and RSVP count. Searches the full text of every upcoming event and tolerates typos, so 'something chill this weekend' or 'free pizza' works. Filter by host org, theme, category, perks (free food, free stuff), and date window. Distinct from the official university calendar (search_events). Upcoming events only. Source: BoilerLink / Anthology Engage (live).",
       inputSchema: {
-        query: z.string().optional().describe("Keyword, e.g. 'callout', 'hackathon', 'tryouts'."),
+        query: z.string().optional().describe("What they want, e.g. 'callout', 'hackathon', 'free pizza'."),
         org: z.string().optional().describe("Only events from this org (name, key, or URL)."),
-        theme: z.enum(THEMES).optional().describe("Engage theme, e.g. 'Social', 'ThoughtfulLearning'."),
+        theme: z
+          .enum(THEMES)
+          .optional()
+          .describe("Engage theme, e.g. 'Social', 'ThoughtfulLearning'."),
         category: z
           .string()
           .optional()
           .describe("Event category name, e.g. 'Callout', 'Meeting'. See boilerlink_categories."),
-        free_food: z.boolean().optional().describe("Only events tagged with the Free Food benefit."),
+        perk: z
+          .enum(["free food", "free stuff"])
+          .optional()
+          .describe("Only events offering this."),
         start: z.string().optional().describe("YYYY-MM-DD start of window. Defaults to now."),
-        days: z.number().int().min(1).max(365).optional().describe("Window length in days from start."),
+        days: z
+          .number()
+          .int()
+          .min(1)
+          .max(365)
+          .optional()
+          .describe("Window length in days from start, e.g. 1 for today, 3 for the weekend."),
         limit: z.number().int().min(1).max(100).optional().describe("Default 20."),
       },
     },
-    async ({ query, org, theme, category, free_food, start, days, limit }): Promise<ToolResult> => {
-      let organizationId: number | undefined;
+    async ({ query, org, theme, category, perk, start, days, limit }): Promise<ToolResult> => {
+      const n = limit ?? 20;
+      const { docs } = await eventCorpus();
+
       let orgLabel = "";
+      let orgId: number | undefined;
       if (org) {
         const hit = await findOrg(org);
         if (!hit) return text(`No BoilerLink organization matches "${org}".`);
-        organizationId = Number(hit.Id);
+        orgId = Number(hit.Id);
         orgLabel = hit.Name.trim();
       }
 
-      let categoryIds: number | undefined;
+      let catLabel = "";
       if (category) {
-        const id = await categoryId("category", category);
-        if (!id)
+        const name = await matchCategory("category", category);
+        if (!name)
           return text(
             `No BoilerLink event category matches "${category}". Call boilerlink_categories for the list.`,
           );
-        categoryIds = id;
+        catLabel = name;
       }
 
       const from = start ? campusIso(start) : new Date().toISOString();
       const until = days ? campusIso(shiftDate(start ?? campusToday(), days)) : undefined;
+      const perkName = perk === "free stuff" ? "Free Stuff" : perk ? "Free Food" : undefined;
+      const now = new Date().toISOString();
 
-      const data = await eventSearch({
-        query,
-        organizationId,
-        themes: theme,
-        categoryIds,
-        // The only benefit token this API filters on is FreeFood; "Free Stuff"
-        // is reported in results but returns nothing as a filter value.
-        benefitNames: free_food ? "FreeFood" : undefined,
-        take: limit ?? 20,
-        endsAfter: from,
-        startsBefore: until,
-        orderByField: "startsOn",
-        orderByDirection: "ascending",
-        status: "Approved",
+      const pool = docs.filter((e) => {
+        // The index is rebuilt every 10 minutes; never show an event that has
+        // already ended because the crawl is a few minutes stale.
+        if (e.endsOn <= now) return false;
+        if (e.endsOn < from) return false;
+        if (until && e.startsOn > until) return false;
+        if (orgId !== undefined && e.organizationId !== orgId) return false;
+        if (theme && e.theme !== theme) return false;
+        if (catLabel && !e.categoryNames?.some((c) => c.trim() === catLabel)) return false;
+        if (perkName && !e.benefitNames?.some((b) => b.trim() === perkName)) return false;
+        return true;
       });
 
-      const events = data.value ?? [];
+      let results: EventHit[];
+      if (query) {
+        results = searchIndex(eventIndex(pool), query, n).map((r) => r.value);
+      } else {
+        results = [...pool].sort((a, b) => a.startsOn.localeCompare(b.startsOn)).slice(0, n);
+      }
+
       const what = [
         query && `"${query}"`,
         orgLabel && `host ${orgLabel}`,
         theme && `theme ${theme}`,
-        category && `category ${category}`,
-        free_food && "free food",
+        catLabel && `category ${catLabel}`,
+        perkName && perkName.toLowerCase(),
         until && `through ${shiftDate(start ?? campusToday(), days!)}`,
       ]
         .filter(Boolean)
         .join(" · ");
-      if (!events.length) return text(`No upcoming club events match ${what || "that search"}.`);
+      if (!results.length) return text(`No upcoming club events match ${what || "that search"}.`);
       return text(
-        `${events.length} of ${data["@odata.count"]} upcoming club event(s)${what ? ` — ${what}` : ""}\n\n` +
-          events.map(formatEvent).join("\n\n"),
+        `${results.length} of ${pool.length} upcoming club event(s)${what ? ` — ${what}` : ""}\n\n` +
+          results.map(formatEvent).join("\n\n"),
       );
     },
   );
@@ -369,7 +529,6 @@ export function registerBoilerLink(server: McpServer) {
         endsOn: string;
         theme: string | null;
         organizationId: number;
-        imageUrl: string | null;
         address: {
           name: string | null;
           address: string | null;
@@ -390,15 +549,23 @@ export function registerBoilerLink(server: McpServer) {
       };
       const d = await getJSON<EventDetail>(`${API}/event/${id}`, { ttlMs: EVENT_TTL });
 
-      // The detail payload carries an org id but not its name; the search index has both.
+      // The detail payload carries an org id but not its name.
       let host = "";
-      const idx = await eventSearch({ query: d.name, take: 10, endsAfter: "2000-01-01T00:00:00Z" });
-      const match = (idx.value ?? []).find((e) => String(e.id) === String(d.id));
-      if (match) host = match.organizationName.trim();
+      try {
+        const { docs } = await orgCorpus();
+        host = docs.find((o) => Number(o.Id) === d.organizationId)?.Name.trim() ?? "";
+      } catch {
+        // A named host is a nicety, not the answer.
+      }
 
       const where = [d.address?.name?.trim(), d.address?.address?.trim()]
         .filter((v, i, a) => v && a.indexOf(v) === i)
         .join(" · ");
+      const tags = [
+        d.theme,
+        ...(d.categories ?? []).map((c) => c.name),
+        ...(d.benefits ?? []).map((b) => b.name),
+      ].filter(Boolean);
       const rsvp = d.rsvpSettings;
       const lines = [
         `${d.name.trim()}${host ? ` — ${host}` : ""}`,
@@ -409,13 +576,7 @@ export function registerBoilerLink(server: McpServer) {
           : "",
         d.address?.onlineLocation ? `  online: ${d.address.onlineLocation}` : "",
         d.address?.instructions ? `  instructions: ${stripHtml(d.address.instructions, 200)}` : "",
-        [
-          d.theme,
-          ...(d.categories ?? []).map((c) => c.name),
-          ...(d.benefits ?? []).map((b) => b.name),
-        ].filter(Boolean).length
-          ? `  ${[d.theme, ...(d.categories ?? []).map((c) => c.name), ...(d.benefits ?? []).map((b) => b.name)].filter(Boolean).join(" · ")}`
-          : "",
+        tags.length ? `  ${tags.join(" · ")}` : "",
         rsvp
           ? `  RSVPs: ${rsvp.totalRsvps ?? 0}${rsvp.spotsAvailable !== null ? ` · ${rsvp.spotsAvailable} spot(s) left` : ""}${rsvp.isInviteOnly ? " · invite only" : ""}${rsvp.shouldAllowGuests ? " · guests allowed" : ""}`
           : "",
