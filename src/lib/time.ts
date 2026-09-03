@@ -58,3 +58,42 @@ export function prettyStamp(iso: string | null | undefined): string {
     minute: "2-digit",
   }).format(d);
 }
+
+/** UTC offset for a campus date, e.g. "-04:00" — Indiana switches with DST. */
+function campusOffset(date: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: CAMPUS_TZ,
+    timeZoneName: "longOffset",
+  }).formatToParts(new Date(`${date}T12:00:00Z`));
+  const name = parts.find((p) => p.type === "timeZoneName")?.value ?? "GMT-05:00";
+  return name.replace("GMT", "") || "-05:00";
+}
+
+/** A campus-local wall time on YYYY-MM-DD as a UTC ISO stamp. */
+export function campusIso(date: string, time = "00:00:00"): string {
+  return new Date(`${date}T${time}${campusOffset(date)}`).toISOString();
+}
+
+/** ISO timestamp -> campus-local "Nov 17, 2021" */
+export function prettyDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: CAMPUS_TZ,
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(d);
+}
+
+/**
+ * "Thu, Sep 3, 3:00 PM – 5:00 PM", but keeps the date on the end when the
+ * event runs past midnight — a semester-long event is not a two-hour one.
+ */
+export function stampRange(start: string, end: string | null | undefined): string {
+  const from = prettyStamp(start);
+  if (!end) return from;
+  const sameDay = prettyDate(start) === prettyDate(end);
+  return `${from} – ${sameDay ? prettyStamp(end).split(", ").pop() : prettyStamp(end)}`;
+}

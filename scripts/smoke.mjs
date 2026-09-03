@@ -26,7 +26,14 @@ const calls = [
   ["find_building", { query: "LWSN" }],
   ["search_events", { days: 14, limit: 3 }],
   ["search_student_orgs", { query: "robotics", limit: 3 }],
+  ["search_student_orgs", { category: "Gaming", limit: 3 }],
+  ["student_org_profile", { org: "Boiler Blockchain", events: 2 }],
+  ["student_org_profile", { org: "https://boilerlink.purdue.edu/organization/boilerblockchain", events: 0 }],
   ["search_club_events", { limit: 3 }],
+  ["search_club_events", { free_food: true, days: 30, limit: 3 }],
+  ["search_club_events", { category: "Callout", days: 30, limit: 3 }],
+  ["search_club_events", { theme: "Social", limit: 2 }],
+  ["boilerlink_categories", {}],
   ["campus_weather", { periods: 2 }],
   ["banner_terms", {}],
   ["course_availability", { subject: "CS", number: "18000", open_only: true, limit: 4 }],
@@ -58,6 +65,39 @@ for (const [name, args] of calls) {
   } catch (e) {
     failures++;
     console.log(`--- THREW ${name}: ${e.message}\n`);
+  }
+}
+
+// BoilerLink: a website key only resolves through the by-key endpoint, and the
+// event id has to survive the round trip from a search result into the detail
+// tool. Both are silent-wrong-answer bugs, not errors, so assert on them.
+const call = async (name, args) =>
+  (await client.callTool({ name, arguments: args })).content.map((c) => c.text).join("\n");
+
+const byUrl = await call("student_org_profile", {
+  org: "https://boilerlink.purdue.edu/organization/boilerblockchain",
+  events: 0,
+});
+if (!/^Boiler Blockchain/.test(byUrl)) {
+  failures++;
+  console.log(`--- FAIL org URL resolved to: ${byUrl.split("\n")[0]}`);
+} else {
+  console.log("--- ok  org URL/website key resolves to the right org\n");
+}
+
+const listing = await call("search_club_events", { limit: 5 });
+const eventId = /boilerlink\.purdue\.edu\/event\/(\d+)/.exec(listing)?.[1];
+if (!eventId) {
+  failures++;
+  console.log("--- FAIL search_club_events returned no event link to follow");
+} else {
+  const detail = await call("club_event_details", { event: eventId });
+  console.log(`--- ok  club_event_details ${eventId}`);
+  console.log(detail.split("\n").slice(0, 8).join("\n"));
+  console.log("");
+  if (!detail.includes(eventId)) {
+    failures++;
+    console.log("--- FAIL club_event_details returned a different event");
   }
 }
 

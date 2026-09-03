@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerDining } from "./sources/dining.js";
 import { registerCourses } from "./sources/courses.js";
 import { registerEvents } from "./sources/events.js";
+import { registerBoilerLink } from "./sources/boilerlink.js";
 import { registerWeather } from "./sources/weather.js";
 import { registerRecreation } from "./sources/recreation.js";
 import { registerLibraries } from "./sources/libraries.js";
@@ -20,8 +21,11 @@ export const INSTRUCTIONS = [
   "  find_building, academic_calendar.",
   "Registration (LIVE seats — prefer these for 'can I get in'): course_availability,",
   "  section_details, banner_terms.",
-  "Campus life: search_events (official calendar), search_student_orgs and search_club_events",
-  "  (BoilerLink), purdue_news.",
+  "Campus life: search_events (official university calendar), purdue_news.",
+  "BoilerLink (student orgs and their events): search_student_orgs, student_org_profile,",
+  "  search_club_events, club_event_details, boilerlink_categories.",
+  "  search_club_events filters by host org, theme, category, free food, and date window;",
+  "  call boilerlink_categories for the exact category names.",
   "Facilities: recwell_occupancy (live gym headcounts), library_hours.",
   "Athletics: athletics_sports, athletics_schedule, athletics_upcoming.",
   "Getting around: bus_routes, bus_stops, bus_next_departures (CityBus, scheduled times).",
@@ -36,13 +40,14 @@ export const INSTRUCTIONS = [
 /** One fully-registered server. Callers own the transport. */
 export function createServer(): McpServer {
   const server = new McpServer(
-    { name: "purdue-mcp", version: "0.3.0" },
+    { name: "purdue-mcp", version: "0.4.0" },
     { instructions: INSTRUCTIONS },
   );
 
   registerDining(server);
   registerCourses(server);
   registerEvents(server);
+  registerBoilerLink(server);
   registerWeather(server);
   registerRecreation(server);
   registerLibraries(server);
