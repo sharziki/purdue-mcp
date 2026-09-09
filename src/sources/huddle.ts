@@ -10,11 +10,11 @@ import { text, type ToolResult } from "../lib/result.js";
 // never make it onto the university calendar or BoilerLink.
 //
 // The site sits behind Vercel's bot challenge: an ordinary fetch of
-// /api/firestore/events gets 429 with `x-vercel-mitigated: challenge` from any
-// client, any IP, any headers. So the corpus is mirrored by
-// scripts/huddle-mirror.mjs — a headless browser that pulls it twice an hour —
-// and this tool reads that static JSON. Point PURDUE_MCP_HUDDLE_MIRROR at your
-// own copy to self-host it.
+// /api/firestore/events gets 429 with `x-vercel-mitigated: challenge` whatever
+// the headers, and the challenge only clears for a real browser on a
+// residential IP. So the corpus is mirrored twice an hour by
+// scripts/huddle-publish.sh and this tool reads that static JSON. Point
+// PURDUE_MCP_HUDDLE_MIRROR at your own copy to self-host it.
 const SITE = "https://www.gethuddle.social";
 const EVENTS_PAGE = `${SITE}/events/purdue`;
 const MIRROR =

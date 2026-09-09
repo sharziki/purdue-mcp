@@ -1,0 +1,10 @@
+[Unit]
+Description=Pull Huddle twice an hour
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

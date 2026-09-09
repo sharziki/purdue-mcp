@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh the Huddle events mirror on purdue-mcp's data branch
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/purdue-mcp/scripts/huddle-publish.sh

@@ -10,6 +10,9 @@
  * `huddle_events` tool can read with an ordinary fetch. robots.txt on the site
  * is `Allow: /`, and this runs twice an hour, once, for everyone.
  *
+ * Run it from a residential connection: the challenge is IP-reputation gated
+ * and never clears from a datacenter address, headless browser or not.
+ *
  *   node scripts/huddle-mirror.mjs [--out huddle-purdue.json] [--college "Purdue University"]
  */
 import { writeFileSync } from "node:fs";
