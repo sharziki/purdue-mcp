@@ -1,6 +1,6 @@
 {
   "name": "purdue-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "MCP server for all public, real-time Purdue University data: dining, live gym occupancy, courses, bus times, events, libraries, athletics, news, weather.",
   "license": "MIT",
   "type": "module",
@@ -39,6 +39,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "puppeteer": "^25.10.0",
     "typescript": "^5.6.3"
   },
   "repository": {

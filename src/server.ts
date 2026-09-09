@@ -3,6 +3,7 @@ import { registerDining } from "./sources/dining.js";
 import { registerCourses } from "./sources/courses.js";
 import { registerEvents } from "./sources/events.js";
 import { registerBoilerLink } from "./sources/boilerlink.js";
+import { registerHuddle } from "./sources/huddle.js";
 import { registerWeather } from "./sources/weather.js";
 import { registerRecreation } from "./sources/recreation.js";
 import { registerLibraries } from "./sources/libraries.js";
@@ -22,6 +23,7 @@ export const INSTRUCTIONS = [
   "Registration (LIVE seats — prefer these for 'can I get in'): course_availability,",
   "  section_details, banner_terms.",
   "Campus life: search_events (official university calendar), purdue_news.",
+  "Huddle (student-posted flyers -- callouts, free food, tryouts the calendars miss): huddle_events.",
   "BoilerLink (student orgs and their events): search_student_orgs, student_org_profile,",
   "  search_club_events, club_event_details, boilerlink_categories.",
   "  The two searches read a local index of every org and upcoming event, so they match",
@@ -42,7 +44,7 @@ export const INSTRUCTIONS = [
 /** One fully-registered server. Callers own the transport. */
 export function createServer(): McpServer {
   const server = new McpServer(
-    { name: "purdue-mcp", version: "0.4.0" },
+    { name: "purdue-mcp", version: "0.5.0" },
     { instructions: INSTRUCTIONS },
   );
 
@@ -50,6 +52,7 @@ export function createServer(): McpServer {
   registerCourses(server);
   registerEvents(server);
   registerBoilerLink(server);
+  registerHuddle(server);
   registerWeather(server);
   registerRecreation(server);
   registerLibraries(server);

@@ -100,6 +100,7 @@ npm install && npm run build
 | `search_club_events` | Upcoming club events: callouts, socials, meetings — same search, plus filters for host org, theme, category, free food/free stuff, and date window |
 | `club_event_details` | One club event in full: complete description, street address and coordinates, perks, RSVP count and spots left |
 | `boilerlink_categories` | The exact org/event category and theme names the two searches accept |
+| `huddle_events` | Student-posted flyers from Huddle — callouts, free-food nights, tryouts and socials that never reach the official calendar. Same typo-tolerant search, plus tag/org filters and a ~2,600-event archive |
 | `reddit_purdue` | What students are actually talking about on r/Purdue (unofficial) |
 | `purdue_exponent` | Purdue Exponent student newspaper — campus reporting, editorially independent |
 
@@ -149,6 +150,7 @@ Dates default to **today in the campus timezone** (`America/Indiana/Indianapolis
 | Purdue Banner | `selfservice.mypurdue.purdue.edu/prod` | Public class search — **no login**. Authoritative for seats/waitlist/prereqs. HTML, so parsing is version-sensitive. |
 | Purdue.io | `api.purdue.io/odata` | Community-run open-source catalog mirror ([Purdue-io/PurdueApi](https://github.com/Purdue-io/PurdueApi)) |
 | Purdue Events | `events.purdue.edu/api/2` | Localist public API |
+| Huddle | `gethuddle.social/api/firestore/events` | Student-run event app. The whole college corpus comes back in one request — but the site is behind Vercel's bot challenge, which 429s every plain HTTP client regardless of headers or IP. `robots.txt` is `Allow: /`, so a GitHub Action ([`huddle-mirror.yml`](.github/workflows/huddle-mirror.yml)) pulls it in a headless browser twice an hour and publishes static JSON to the repo's `data` branch; `huddle_events` reads that. Set `PURDUE_MCP_HUDDLE_MIRROR` to host your own. |
 | BoilerLink | `boilerlink.purdue.edu/api/discovery` | Anthology Engage public discovery API. Same host students use; `purdue.campuslabs.com/engage` serves it too. Org **website keys are not in the search index** — they only resolve through `/organization/bykey/{key}`, which is also the only place email and socials live. Upstream search is plain keyword OR, so all 1,206 orgs (13 requests) and ~1,500 upcoming events (4 requests) are crawled once and ranked locally. |
 | Purdue RecWell | `goboardapi.azurewebsites.net` (Connect2) | Live occupancy counters; account key is the one Purdue's own public widget ships |
 | Purdue Libraries | `calendar.lib.purdue.edu` | Springshare LibCal public hours endpoints |
