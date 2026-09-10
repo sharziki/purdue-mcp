@@ -2,9 +2,13 @@
 Description=Pull Huddle twice an hour
 
 [Timer]
-OnBootSec=5min
-OnUnitActiveSec=30min
+# Wall-clock, not OnUnitActiveSec: the monotonic clock stops while the laptop
+# is suspended, so an interval timer silently drifts by the length of every
+# sleep. Persistent=true also fires a catch-up run on resume when a window was
+# missed, which is what keeps the mirror fresh on a machine that closes.
+OnCalendar=*:07,37
 Persistent=true
+AccuracySec=1min
 
 [Install]
 WantedBy=timers.target
