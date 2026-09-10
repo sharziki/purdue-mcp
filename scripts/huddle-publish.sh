@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Refresh the Huddle mirror and publish it to the repo's `data` branch.
+# Refresh the SHARED fallback copy on the repo's `data` branch.
+#
+# Most people never need this: `purdue-mcp-huddle` writes a local copy on their
+# own machine and the tool prefers it. This is only for keeping the fallback
+# that serves anyone who has not run the refresher.
 #
 # Must run from a residential connection. Vercel's challenge is IP-reputation
 # gated: the same headless browser that sails through here sits on the
@@ -14,16 +18,10 @@ REPO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REMOTE=${HUDDLE_REMOTE:-$(git -C "$REPO_DIR" remote get-url origin)}
 BRANCH=${HUDDLE_BRANCH:-data}
 
-# puppeteer resolves its own download unless npm blocked the postinstall.
-if [[ -z ${PUPPETEER_EXECUTABLE_PATH:-} ]]; then
-  chrome=$(ls -d "$HOME"/.cache/puppeteer/chrome/*/chrome-linux64/chrome 2>/dev/null | sort -V | tail -1 || true)
-  [[ -n $chrome ]] && export PUPPETEER_EXECUTABLE_PATH="$chrome"
-fi
-
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-node "$REPO_DIR/scripts/huddle-mirror.mjs" --out "$work/huddle-purdue.json"
+node "$REPO_DIR/dist/huddle-cli.js" --out "$work/huddle-purdue.json"
 
 cd "$work"
 git init -q

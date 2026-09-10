@@ -1,15 +1,17 @@
 {
   "name": "purdue-mcp",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "MCP server for all public, real-time Purdue University data: dining, live gym occupancy, courses, bus times, events, libraries, athletics, news, weather.",
   "license": "MIT",
   "type": "module",
   "bin": {
     "purdue-mcp": "dist/index.js",
-    "purdue-mcp-http": "dist/http.js"
+    "purdue-mcp-http": "dist/http.js",
+    "purdue-mcp-huddle": "dist/huddle-cli.js"
   },
   "files": [
     "dist",
+    "skills",
     "README.md",
     "install.md",
     "LICENSE"
@@ -35,11 +37,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
+    "puppeteer-core": "^25.0.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
-    "puppeteer": "^25.10.0",
     "typescript": "^5.6.3"
   },
   "repository": {

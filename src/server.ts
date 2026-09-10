@@ -44,7 +44,7 @@ export const INSTRUCTIONS = [
 /** One fully-registered server. Callers own the transport. */
 export function createServer(): McpServer {
   const server = new McpServer(
-    { name: "purdue-mcp", version: "0.5.1" },
+    { name: "purdue-mcp", version: "0.6.0" },
     { instructions: INSTRUCTIONS },
   );
 

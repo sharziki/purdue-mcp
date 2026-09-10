@@ -150,7 +150,7 @@ Dates default to **today in the campus timezone** (`America/Indiana/Indianapolis
 | Purdue Banner | `selfservice.mypurdue.purdue.edu/prod` | Public class search — **no login**. Authoritative for seats/waitlist/prereqs. HTML, so parsing is version-sensitive. |
 | Purdue.io | `api.purdue.io/odata` | Community-run open-source catalog mirror ([Purdue-io/PurdueApi](https://github.com/Purdue-io/PurdueApi)) |
 | Purdue Events | `events.purdue.edu/api/2` | Localist public API |
-| Huddle | `gethuddle.social/api/firestore/events` | Student-run event app; one request returns the whole college corpus. The site is behind Vercel's bot challenge, so this one is **mirrored** rather than fetched live — see below. |
+| Huddle | `gethuddle.social/api/firestore/events` | Student-run event app; one request returns the whole college corpus. Behind Vercel's bot challenge, so it is pulled by `purdue-mcp-huddle` on your own machine rather than fetched live — see below. |
 | BoilerLink | `boilerlink.purdue.edu/api/discovery` | Anthology Engage public discovery API. Same host students use; `purdue.campuslabs.com/engage` serves it too. Org **website keys are not in the search index** — they only resolve through `/organization/bykey/{key}`, which is also the only place email and socials live. Upstream search is plain keyword OR, so all 1,206 orgs (13 requests) and ~1,500 upcoming events (4 requests) are crawled once and ranked locally. |
 | Purdue RecWell | `goboardapi.azurewebsites.net` (Connect2) | Live occupancy counters; account key is the one Purdue's own public widget ships |
 | Purdue Libraries | `calendar.lib.purdue.edu` | Springshare LibCal public hours endpoints |
@@ -161,33 +161,42 @@ Dates default to **today in the campus timezone** (`America/Indiana/Indianapolis
 | Purdue Exponent | `purdueexponent.org` RSS | Independent student newspaper |
 | NOAA / NWS | `api.weather.gov` | Public federal API |
 
-### The Huddle mirror
+### Huddle needs one command from you
 
 Huddle is the only source here that cannot be fetched at request time. Every
 plain HTTP client — curl, `fetch`, this server — gets `429` with
-`x-vercel-mitigated: challenge`, whatever the headers. Worse, the challenge is
-IP-reputation gated: a real headless browser passes it in about a second from a
-residential connection and never passes it at all from a datacenter address
-(verified on a VPS and, by extension, on GitHub Actions runners).
+`x-vercel-mitigated: challenge`, whatever the headers. And the challenge is
+IP-reputation gated: a real browser clears it in about a second from a home or
+campus connection, and **never** clears it from a datacenter address (measured
+on a VPS, which by extension rules out CI runners and any hosted mirror).
 
-So the corpus is pulled by [`scripts/huddle-mirror.mjs`](scripts/huddle-mirror.mjs)
-— a headless Chrome that loads the events page, lets the challenge run, then
-reads the API from inside the page — and
-[`scripts/huddle-publish.sh`](scripts/huddle-publish.sh) force-pushes the
-trimmed JSON to this repo's [`data`](../../tree/data) branch as a single orphan
-commit, twice an hour, from a residential machine:
+There is therefore no server anyone can run that stays fresh. So the fetch
+happens on your machine, when you ask for it:
 
 ```bash
-scripts/huddle-publish.sh                            # once, by hand
-cp scripts/systemd/huddle-mirror.* ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now huddle-mirror.timer    # every 30 minutes
+npx -y purdue-mcp-huddle          # ~4s, uses a Chrome you already have
 ```
 
-`huddle_events` then reads that static file (~420 KB gzipped) with an ordinary
-fetch and reports how old it is. `robots.txt` on the site is `Allow: /`, and the
-mirror is one request per half hour for every user of this server. Point
-`PURDUE_MCP_HUDDLE_MIRROR` at your own copy to run the refresh yourself.
+That writes `~/.cache/purdue-mcp/huddle-purdue.json` (~2,600 events) and
+`huddle_events` prefers it from then on. Nothing is installed as a service,
+nothing runs in the background, and no browser profile or login is touched — a
+throwaway profile opens the public events page, reads the API from inside it,
+and exits. `puppeteer-core` drives a browser you already have; no browser is
+downloaded.
+
+To keep it current, put it on cron — or don't, and refresh when you care. Every
+response states how old its copy is and warns past six hours. Full setup,
+scheduling and troubleshooting: [`skills/purdue-huddle`](skills/purdue-huddle/SKILL.md),
+which an agent can follow on your behalf.
+
+| Where it reads from | When |
+| --- | --- |
+| `PURDUE_MCP_HUDDLE_MIRROR` | Set — a file path or a URL. Lets a club share one copy. |
+| `~/.cache/purdue-mcp/huddle-purdue.json` | You ran the refresher. |
+| A copy on this repo's `data` branch | You haven't. Refreshed by hand, often stale, and labelled "shared copy" in every response. |
+
+Requires a Chromium-family browser (Chrome, Chromium, Edge, Brave). Firefox
+cannot be used — it does not speak the DevTools protocol.
 
 Responses are cached in-process with short TTLs (30s–24h depending on how fast the data moves) to stay a polite client. Nothing is persisted to disk.
 

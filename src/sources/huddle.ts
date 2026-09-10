@@ -1,6 +1,14 @@
+import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getJSON } from "../lib/http.js";
+import {
+  DEFAULT_CACHE,
+  EVENTS_PAGE,
+  PUBLIC_MIRROR,
+  type HuddleEvent,
+  type Mirror,
+} from "../lib/huddle.js";
 import {
   CAMPUS_TZ,
   campusIso,
@@ -19,49 +27,15 @@ import { text, type ToolResult } from "../lib/result.js";
 //
 // The site sits behind Vercel's bot challenge: an ordinary fetch of
 // /api/firestore/events gets 429 with `x-vercel-mitigated: challenge` whatever
-// the headers, and the challenge only clears for a real browser on a
-// residential IP. So the corpus is mirrored twice an hour by
-// scripts/huddle-publish.sh and this tool reads that static JSON. Point
-// PURDUE_MCP_HUDDLE_MIRROR at your own copy to self-host it.
-const SITE = "https://www.gethuddle.social";
-const EVENTS_PAGE = `${SITE}/events/purdue`;
-const MIRROR =
-  process.env.PURDUE_MCP_HUDDLE_MIRROR ||
-  "https://raw.githubusercontent.com/sharziki/purdue-mcp/data/huddle-purdue.json";
-
+// the headers, and the challenge refuses datacenter IPs outright — so nobody
+// can host this centrally and stay fresh. Instead `purdue-mcp-huddle` pulls the
+// corpus through the browser on YOUR machine, on YOUR connection, and this tool
+// reads whatever it wrote. A stale shared copy is the fallback for anyone who
+// has not run it.
 const TTL = 10 * 60_000;
 
 /** How old the mirror gets before results carry a warning. */
 const STALE_MS = 6 * 60 * 60_000;
-
-type HuddleEvent = {
-  id: string;
-  title: string;
-  org?: string;
-  start: string;
-  end?: string;
-  location?: string;
-  address?: string;
-  description?: string;
-  tags?: string[];
-  flyer?: string;
-  link?: string;
-  linkName?: string;
-  rsvp?: boolean;
-  rsvpCount?: number;
-  likes?: number;
-  views?: number;
-  lat?: number;
-  lng?: number;
-};
-
-type Mirror = {
-  source: string;
-  college: string;
-  fetchedAt: string;
-  count: number;
-  events: HuddleEvent[];
-};
 
 /**
  * The tags the app puts in front of people posting a flyer. A handful of older
@@ -106,24 +80,51 @@ function normalize(e: HuddleEvent): HuddleEvent | null {
   };
 }
 
-let at = 0;
-let pending: Promise<Mirror> | null = null;
+type Loaded = { mirror: Mirror; source: "local" | "shared" };
 
-function corpus(): Promise<Mirror> {
+let at = 0;
+let pending: Promise<Loaded> | null = null;
+
+const clean = (m: Mirror): Mirror => ({
+  ...m,
+  events: (m.events ?? [])
+    .filter((e) => e?.id && e?.title && e?.start)
+    .map(normalize)
+    .filter((e): e is HuddleEvent => e !== null),
+});
+
+/**
+ * Whatever the person running this server refreshed themselves, then the
+ * shared copy. PURDUE_MCP_HUDDLE_MIRROR overrides both and takes a path or a
+ * URL, so a household or a club can point every install at one file.
+ */
+async function load(): Promise<Loaded> {
+  const override = process.env.PURDUE_MCP_HUDDLE_MIRROR;
+  if (override) {
+    const mirror = /^https?:\/\//.test(override)
+      ? await getJSON<Mirror>(override, { ttlMs: TTL, timeoutMs: 30_000 })
+      : (JSON.parse(await readFile(override, "utf8")) as Mirror);
+    return { mirror: clean(mirror), source: "local" };
+  }
+
+  try {
+    const mirror = JSON.parse(await readFile(DEFAULT_CACHE, "utf8")) as Mirror;
+    return { mirror: clean(mirror), source: "local" };
+  } catch {
+    // Nobody has run purdue-mcp-huddle here yet.
+  }
+
+  const mirror = await getJSON<Mirror>(PUBLIC_MIRROR, { ttlMs: TTL, timeoutMs: 30_000 });
+  return { mirror: clean(mirror), source: "shared" };
+}
+
+function corpus(): Promise<Loaded> {
   if (!pending || Date.now() - at > TTL) {
     at = Date.now();
-    pending = getJSON<Mirror>(MIRROR, { ttlMs: TTL, timeoutMs: 30_000 })
-      .then((mirror) => ({
-        ...mirror,
-        events: (mirror.events ?? [])
-          .filter((e) => e?.id && e?.title && e?.start)
-          .map(normalize)
-          .filter((e): e is HuddleEvent => e !== null),
-      }))
-      .catch((e) => {
-        pending = null;
-        throw e;
-      });
+    pending = load().catch((e) => {
+      pending = null;
+      throw e;
+    });
   }
   return pending;
 }
@@ -186,16 +187,20 @@ function format(e: HuddleEvent): string {
     .join("\n");
 }
 
-function freshness(mirror: Mirror): string {
+const REFRESH = "Run `npx purdue-mcp-huddle` to pull a current copy through this machine's browser.";
+
+function freshness({ mirror, source }: Loaded): string {
   const age = Date.now() - new Date(mirror.fetchedAt).getTime();
+  const shared = source === "shared" ? " shared copy" : "";
   if (!Number.isFinite(age)) return "";
-  if (age < 0) return `\n\nSource: Huddle (${EVENTS_PAGE}), mirrored ${mirror.fetchedAt}.`;
+  if (age < 0) return `\n\nSource: Huddle${shared} (${EVENTS_PAGE}), pulled ${mirror.fetchedAt}.`;
   const hours = age / 3_600_000;
   const label =
     hours < 1 ? `${Math.max(1, Math.round(age / 60_000))} min ago` : `${hours.toFixed(1)}h ago`;
-  return age > STALE_MS
-    ? `\n\nMirror last refreshed ${label} — Huddle may have newer flyers. ${EVENTS_PAGE}`
-    : `\n\nSource: Huddle (${EVENTS_PAGE}), mirrored ${label}.`;
+  if (age <= STALE_MS) return `\n\nSource: Huddle${shared} (${EVENTS_PAGE}), pulled ${label}.`;
+  return (
+    `\n\nThis${shared || " copy"} was pulled ${label} — Huddle may have newer flyers.\n${REFRESH}`
+  );
 }
 
 export function registerHuddle(server: McpServer) {
@@ -234,7 +239,8 @@ export function registerHuddle(server: McpServer) {
     },
     async ({ query, tag, org, days, start, past, limit }): Promise<ToolResult> => {
       const n = limit ?? 20;
-      const mirror = await corpus();
+      const loaded = await corpus();
+      const mirror = loaded.mirror;
 
       const from = start ? parseCampusDate(start) : campusToday();
       if (!from)
@@ -295,7 +301,7 @@ export function registerHuddle(server: McpServer) {
         return text(
           `No Huddle events match ${what || "that search"} in ${span}.` +
             (past ? "" : " Try a longer window, or past=true for the archive.") +
-            freshness(mirror),
+            freshness(loaded),
         );
       }
 
@@ -309,7 +315,7 @@ export function registerHuddle(server: McpServer) {
         ? `${ordered.length} past Huddle event${ordered.length === 1 ? "" : "s"}${what ? ` for ${what}` : ""}`
         : `${ordered.length} Huddle event${ordered.length === 1 ? "" : "s"}${what ? ` for ${what}` : ""} in the next ${window} day${window === 1 ? "" : "s"}`;
 
-      return text(`${head}:\n\n${ordered.map(format).join("\n\n")}${freshness(mirror)}`);
+      return text(`${head}:\n\n${ordered.map(format).join("\n\n")}${freshness(loaded)}`);
     },
   );
 }
