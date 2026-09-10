@@ -107,6 +107,38 @@ if (!eventId) {
   }
 }
 
+// Huddle's window filter is the one that already broke once: a keyword query
+// searched the whole 2,600-event archive and answered "what's on this week"
+// with a hit from last February. Dates render without a year inside the
+// current one, so assert on the exact day labels the window allows.
+const WINDOW_DAYS = 7;
+const label = (offset) => {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + offset);
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Indiana/Indianapolis",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(d);
+};
+const allowed = new Set(Array.from({ length: WINDOW_DAYS + 1 }, (_, i) => label(i)));
+const windowed = await call("huddle_events", {
+  query: "free food",
+  days: WINDOW_DAYS,
+  limit: 20,
+});
+const dated = [...windowed.matchAll(/^ {2}(\w{3}, \w{3} \d{1,2})(,|\s|$)/gm)].map((m) => m[1]);
+const strays = dated.filter((d) => !allowed.has(d));
+if (!dated.length) {
+  console.log("--- ok  huddle_events window: nothing scheduled to check\n");
+} else if (strays.length) {
+  failures++;
+  console.log(`--- FAIL huddle_events returned dates outside the ${WINDOW_DAYS}-day window: ${[...new Set(strays)].join(", ")}`);
+} else {
+  console.log(`--- ok  huddle_events window: all ${dated.length} results inside ${WINDOW_DAYS} days\n`);
+}
+
 // The local index is the whole reason org search stopped being BoilerLink's
 // keyword OR. These three are exactly what upstream gets wrong: a typo returns
 // nothing, "rock climbing" ranks Rock Band with the climbing clubs, and a

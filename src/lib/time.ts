@@ -34,6 +34,18 @@ export function isDateString(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
+/**
+ * A YYYY-MM-DD the calendar actually has, or null. The shape check alone is
+ * not enough: "2026-13-45" passes the regex and then throws "Invalid time
+ * value" out of Intl the moment anything tries to format it.
+ */
+export function parseCampusDate(s: string): string | null {
+  if (!isDateString(s)) return null;
+  const d = new Date(`${s}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10) === s ? s : null;
+}
+
 /** "17:00:00" -> "5:00 PM" */
 export function prettyTime(hms: string | null | undefined): string {
   if (!hms) return "";

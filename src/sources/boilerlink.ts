@@ -1,7 +1,14 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getJSON, qs, stripHtml } from "../lib/http.js";
-import { campusIso, campusToday, prettyDate, shiftDate, stampRange } from "../lib/time.js";
+import {
+  campusIso,
+  campusToday,
+  parseCampusDate,
+  prettyDate,
+  shiftDate,
+  stampRange,
+} from "../lib/time.js";
 import { buildIndex, searchIndex, type TextIndex } from "../lib/textsearch.js";
 import { text, type ToolResult } from "../lib/result.js";
 
@@ -464,8 +471,11 @@ export function registerBoilerLink(server: McpServer) {
         catLabel = name;
       }
 
-      const from = start ? campusIso(start) : new Date().toISOString();
-      const until = days ? campusIso(shiftDate(start ?? campusToday(), days)) : undefined;
+      const day = start ? parseCampusDate(start) : campusToday();
+      if (!day)
+        return text(`"${start}" is not a date I can read. Use YYYY-MM-DD, e.g. ${campusToday()}.`);
+      const from = start ? campusIso(day) : new Date().toISOString();
+      const until = days ? campusIso(shiftDate(day, days)) : undefined;
       const perkName = perk === "free stuff" ? "Free Stuff" : perk ? "Free Food" : undefined;
       const now = new Date().toISOString();
 

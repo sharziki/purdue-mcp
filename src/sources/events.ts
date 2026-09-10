@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getJSON, qs, stripHtml } from "../lib/http.js";
-import { campusToday, prettyStamp, shiftDate, stampRange } from "../lib/time.js";
+import { campusToday, parseCampusDate, prettyStamp, shiftDate, stampRange } from "../lib/time.js";
 import { text, type ToolResult } from "../lib/result.js";
 
 // events.purdue.edu runs Localist; /api/2 is public and unauthenticated.
@@ -70,7 +70,9 @@ export function registerEvents(server: McpServer) {
       },
     },
     async ({ query, days, start, limit }): Promise<ToolResult> => {
-      const from = start ?? campusToday();
+      const from = start ? parseCampusDate(start) : campusToday();
+      if (!from)
+        return text(`"${start}" is not a date I can read. Use YYYY-MM-DD, e.g. ${campusToday()}.`);
       const window = days ?? 7;
       const pp = limit ?? 20;
       const path = query ? "/events/search" : "/events";

@@ -1,7 +1,15 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getJSON } from "../lib/http.js";
-import { campusIso, campusToday, prettyStamp, shiftDate, stampRange } from "../lib/time.js";
+import {
+  CAMPUS_TZ,
+  campusIso,
+  campusToday,
+  parseCampusDate,
+  prettyStamp,
+  shiftDate,
+  stampRange,
+} from "../lib/time.js";
 import { buildIndex, searchIndex } from "../lib/textsearch.js";
 import { text, type ToolResult } from "../lib/result.js";
 
@@ -81,6 +89,23 @@ const fields = (e: HuddleEvent): [string | null | undefined, number][] => [
   [e.description, 1],
 ];
 
+/**
+ * Windows are compared as strings, which is only safe if every stamp is in the
+ * same shape — "…22:00:00+00:00" and "…22:00:00.000Z" are the same instant and
+ * sort differently. Canonicalising here means a change in Huddle's date format
+ * can't quietly move events out of the window a student asked about.
+ */
+function normalize(e: HuddleEvent): HuddleEvent | null {
+  const start = new Date(e.start);
+  if (Number.isNaN(start.getTime())) return null;
+  const end = e.end ? new Date(e.end) : null;
+  return {
+    ...e,
+    start: start.toISOString(),
+    ...(end && !Number.isNaN(end.getTime()) ? { end: end.toISOString() } : { end: undefined }),
+  };
+}
+
 let at = 0;
 let pending: Promise<Mirror> | null = null;
 
@@ -90,7 +115,10 @@ function corpus(): Promise<Mirror> {
     pending = getJSON<Mirror>(MIRROR, { ttlMs: TTL, timeoutMs: 30_000 })
       .then((mirror) => ({
         ...mirror,
-        events: (mirror.events ?? []).filter((e) => e?.id && e?.title && e?.start),
+        events: (mirror.events ?? [])
+          .filter((e) => e?.id && e?.title && e?.start)
+          .map(normalize)
+          .filter((e): e is HuddleEvent => e !== null),
       }))
       .catch((e) => {
         pending = null;
@@ -119,12 +147,24 @@ function matchTag(input: string, events: HuddleEvent[]): string | null {
   );
 }
 
-/** A campus-midnight start is Huddle's "I didn't pick a time", not 12 AM. */
+const campusYear = (d: Date) =>
+  new Intl.DateTimeFormat("en-US", { timeZone: CAMPUS_TZ, year: "numeric" }).format(d);
+
+/**
+ * Two things the shared stamp gets wrong for this corpus: it omits the year,
+ * which is ambiguous the moment an archive search leaves the current one, and
+ * a campus-midnight start is Huddle's "I didn't pick a time", not 12 AM.
+ */
 function when(e: HuddleEvent): string {
+  const year = campusYear(new Date(e.start));
   const stamp = stampRange(e.start, e.end);
-  return e.end || !/, 12:00 AM$/.test(stamp)
-    ? stamp
-    : `${stamp.replace(/, 12:00 AM$/, "")} (time TBA)`;
+  const dated =
+    year === campusYear(new Date())
+      ? stamp
+      : stamp.replace(/^(\w{3}, \w{3} \d{1,2})/, `$1, ${year}`);
+  return e.end || !/, 12:00 AM$/.test(dated)
+    ? dated
+    : `${dated.replace(/, 12:00 AM$/, "")} (time TBA)`;
 }
 
 function format(e: HuddleEvent): string {
@@ -149,6 +189,7 @@ function format(e: HuddleEvent): string {
 function freshness(mirror: Mirror): string {
   const age = Date.now() - new Date(mirror.fetchedAt).getTime();
   if (!Number.isFinite(age)) return "";
+  if (age < 0) return `\n\nSource: Huddle (${EVENTS_PAGE}), mirrored ${mirror.fetchedAt}.`;
   const hours = age / 3_600_000;
   const label =
     hours < 1 ? `${Math.max(1, Math.round(age / 60_000))} min ago` : `${hours.toFixed(1)}h ago`;
@@ -184,7 +225,10 @@ export function registerHuddle(server: McpServer) {
         past: z
           .boolean()
           .optional()
-          .describe("Search past events instead of upcoming ones. Default false."),
+          .describe(
+            "Search the whole archive, newest first, instead of upcoming events. " +
+              "`days` is ignored; `start` becomes the cutoff. Default false.",
+          ),
         limit: z.number().int().min(1).max(100).optional().describe("Default 20."),
       },
     },
@@ -192,7 +236,11 @@ export function registerHuddle(server: McpServer) {
       const n = limit ?? 20;
       const mirror = await corpus();
 
-      const from = start ?? campusToday();
+      const from = start ? parseCampusDate(start) : campusToday();
+      if (!from)
+        return text(
+          `"${start}" is not a date I can read. Use YYYY-MM-DD, e.g. ${campusToday()}.`,
+        );
       const window = days ?? 14;
       const lo = campusIso(from);
       const hi = campusIso(shiftDate(from, window));
@@ -212,15 +260,16 @@ export function registerHuddle(server: McpServer) {
         pool = pool.filter((e) => e.tags?.includes(name));
       }
 
-      if (org) {
-        const want = org.trim().toLowerCase();
+      const wantOrg = org?.trim() ?? "";
+      if (wantOrg) {
+        const want = wantOrg.toLowerCase();
         const matches = pool.filter((e) => (e.org ?? "").toLowerCase().includes(want));
         if (!matches.length) {
           const near = [...new Set(mirror.events.map((e) => e.org).filter(Boolean))]
             .filter((o) => o!.toLowerCase().includes(want))
             .slice(0, 5);
           return text(
-            `No Huddle events from an org matching "${org}" in that window.` +
+            `No Huddle events from an org matching "${wantOrg}" in that window.` +
               (near.length ? ` Orgs with that name have posted before: ${near.join(", ")}.` : ""),
           );
         }
@@ -234,7 +283,7 @@ export function registerHuddle(server: McpServer) {
       const what = [
         query && `"${query}"`,
         tagLabel && `tag ${tagLabel}`,
-        org && `org ${org}`,
+        wantOrg && `org ${wantOrg}`,
       ]
         .filter(Boolean)
         .join(" + ");
