@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerDining } from "./sources/dining.js";
 import { registerCourses } from "./sources/courses.js";
+import { registerExamTools } from "./sources/exams.js";
 import { registerEvents } from "./sources/events.js";
 import { registerBoilerLink } from "./sources/boilerlink.js";
 import { registerHuddle } from "./sources/huddle.js";
@@ -20,6 +21,9 @@ export const INSTRUCTIONS = [
   "  dining_nearby answers 'I am at X, where should I eat' -- nearest first, with walk time and whether it takes a swipe or dining dollars.",
   "Academics (catalog): list_terms, list_subjects, search_courses, course_sections,",
   "  find_building, academic_calendar.",
+  "Exams (Registrar-published schedule): course_exams, upcoming_exams, exam_schedule_status.",
+  "  Evening exams are the mid-semester ones held outside class time; finals are the",
+  "  end-of-term block. upcoming_exams(courses) answers 'what should I study now'.",
   "Registration (LIVE seats — prefer these for 'can I get in'): course_availability,",
   "  section_details, banner_terms.",
   "Campus life: search_events (official university calendar), purdue_news.",
@@ -50,6 +54,7 @@ export function createServer(): McpServer {
 
   registerDining(server);
   registerCourses(server);
+  registerExamTools(server);
   registerEvents(server);
   registerBoilerLink(server);
   registerHuddle(server);

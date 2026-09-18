@@ -127,12 +127,31 @@ npm install && npm run build
 | `bus_stops` | Find stops by name, or the stops nearest a lat/lon |
 | `bus_next_departures` | Next scheduled departures from a stop, with minutes-until |
 
+### Exams
+
+| Tool | What it answers |
+| --- | --- |
+| `course_exams` | Every scheduled exam for a course — date, time, rooms, days remaining |
+| `upcoming_exams` | What is coming in the next N days, optionally only your courses |
+| `exam_schedule_status` | Which term the published schedules cover, and how many exams they hold |
+
+Purdue schedules **evening exams** at night, outside normal class meetings, and
+they are what mid-semester study planning turns on; a course requiring them is
+flagged in the catalog. **Final exams** are the separate end-of-term block. Both
+come from the Registrar's published schedules.
+
+```
+upcoming_exams(days: 21, courses: ["MA 26100", "CS 18000"])
+  → CS 18000GLD — Wed 2026-09-30 08:00p-09:00p (in 12d) · HAAS G050, …  [evening]
+    MA 26100    — Mon 2026-10-05 08:00p-09:00p (in 17d) · Loeb Plyhs, … [evening]
+```
+
 ### News and deadlines
 
 | Tool | What it answers |
 | --- | --- |
 | `purdue_news` | Official newsroom articles, searchable |
-| `academic_calendar` | First day of classes, breaks, finals week, add/drop deadlines, exam scheduling |
+| `academic_calendar` | First day of classes, breaks, finals week, add/drop deadlines |
 
 ### Environment
 
@@ -156,6 +175,7 @@ Dates default to **today in the campus timezone** (`America/Indiana/Indianapolis
 | Purdue Libraries | `calendar.lib.purdue.edu` | Springshare LibCal public hours endpoints |
 | Purdue Athletics | `purduesports.com/website-api` | Official athletics site's public JSON API |
 | Purdue Newsroom / Registrar | `purdue.edu/{newsroom,registrar}/wp-json` | WordPress REST API |
+| Registrar exam schedules | `purdue.edu/registrar/pdf/exam/current_*.pdf` | The only published form; there is no exam API. UniTime-generated PDFs at stable `current_*` URLs, replaced in place each term. Text is extracted directly (no PDF dependency) and rows are attributed by carrying the subject and course forward, since the report prints each only once per block. |
 | CityBus | `bus.gocitybus.com` GTFS | Static schedule feed; **no public real-time feed exists** |
 | r/Purdue | `reddit.com/r/Purdue/.rss` | Unofficial student chatter |
 | Purdue Exponent | `purdueexponent.org` RSS | Independent student newspaper |
