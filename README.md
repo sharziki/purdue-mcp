@@ -10,6 +10,20 @@ Everything it reads is public and unauthenticated. It never touches a student ac
 
 ## Install
 
+**Terminal / application CLI**
+
+```bash
+npx -y -p purdue-mcp@latest purdue-data list
+npx -y -p purdue-mcp@latest purdue-data schema dining_menu
+npx -y -p purdue-mcp@latest purdue-data call dining_menu '{"location":"Wiley","meal":"Lunch"}'
+```
+
+`list` and `schema` print JSON. `call` prints the MCP tool result as JSON and exits
+nonzero on tool errors. No shell command is passed through to a Purdue tool.
+
+The CLI ships alongside the existing MCP transports; publish this package version
+before using the `@latest` commands above.
+
 **Claude Code**
 
 ```bash
