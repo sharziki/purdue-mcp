@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { stripHtml } from "../lib/http.js";
-import { campusNowLabel } from "../lib/time.js";
+import { getJSON, stripHtml } from "../lib/http.js";
+import { campusNowLabel, campusToday } from "../lib/time.js";
 import { text, type ToolResult } from "../lib/result.js";
 
 // Purdue's Banner self-service class search is public — no login. It is the
@@ -51,10 +51,49 @@ async function terms(): Promise<Term[]> {
   return out;
 }
 
-/** Registerable terms come first in Banner's list; "(View only)" ones are past. */
+// Banner's own term list carries no date ranges, only a "(View only)" flag
+// for terms past their registration window — which is NOT the same thing as
+// "the term happening right now": Banner marks the in-session term view-only
+// once its add/drop deadline passes, while the *next* term stays registerable
+// for months before it starts. Defaulting to "first registerable" therefore
+// picked a future term with zero real data instead of the current one. Pull
+// date ranges from Purdue.io (same source courses.ts uses) and match them to
+// Banner's codes so the default can be "the term containing today" instead.
+type DatedTerm = { Code: string; StartDate: string | null; EndDate: string | null };
+async function termDates(): Promise<Map<string, DatedTerm>> {
+  const { value } = await getJSON<{ value: DatedTerm[] }>(
+    "https://api.purdue.io/odata/Terms",
+    { ttlMs: 6 * 60 * 60_000 },
+  );
+  return new Map(value.map((t) => [t.Code, t]));
+}
+
+/**
+ * With no term given: the term whose Purdue.io date range contains today, else
+ * the next upcoming term, else (if Purdue.io is unreachable) the old guess —
+ * the first term Banner doesn't mark "(View only)".
+ */
 async function resolveTerm(input?: string): Promise<Term | undefined> {
   const all = await terms();
-  if (!input) return all.find((t) => !/view only/i.test(t.name)) ?? all[0];
+  if (!input) {
+    try {
+      const dates = await termDates();
+      const today = campusToday();
+      const dated = all
+        .map((t) => ({ t, d: dates.get(t.code) }))
+        .filter((x): x is { t: Term; d: DatedTerm } => !!x.d?.StartDate && !!x.d?.EndDate);
+      const current = dated.find((x) => x.d.StartDate! <= today && today <= x.d.EndDate!);
+      if (current) return current.t;
+      const upcoming = [...dated]
+        .sort((a, b) => a.d.StartDate!.localeCompare(b.d.StartDate!))
+        .find((x) => x.d.StartDate! > today);
+      if (upcoming) return upcoming.t;
+    } catch {
+      // Purdue.io unreachable — fall through to the old registerable-term guess
+      // rather than fail the whole tool over a best-effort date lookup.
+    }
+    return all.find((t) => !/view only/i.test(t.name)) ?? all[0];
+  }
   const q = input.trim().toLowerCase();
   return (
     all.find((t) => t.code === q) ??
